@@ -1,0 +1,110 @@
+name: A01 donor Blender staging proof
+
+on:
+  push:
+    paths:
+      - '.github/workflows/a01_blender_stage.yml'
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout transfer source
+        uses: actions/checkout@v4
+
+      - name: Prepare DTC branch and Python extractor
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch design/g2-007-car-asset-architecture-20260901 \
+            https://github.com/skinbeater123/Dirt-Track-Cowboys.git /tmp/dtc
+          python -m pip install --disable-pip-version-check numpy trimesh
+          rm -rf /tmp/a01 /tmp/a01_out
+          mkdir -p /tmp/a01 /tmp/a01_out
+          unzip -q 'a01_sprintcar.zip' -d /tmp/a01
+          PSSG="$(find /tmp/a01 -type f -iname 'a01_sprintcar_shaded' | head -n 1)"
+          test -n "$PSSG"
+          echo "PSSG=$PSSG" >> "$GITHUB_ENV"
+          python /tmp/dtc/probes/g2-007-car-donor-import/extract_bigant_a01_pssg.py \
+            "$PSSG" --out-dir /tmp/a01_out
+
+      - name: Verify extracted donor census
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          p='/tmp/a01_out/A01_real_donor_extraction_report.json'
+          d=json.load(open(p))
+          s=d['source']
+          c=d['donor_lod0_intact_dtc']
+          assert s['pssg_sha256']=='6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6'
+          assert s['parsed_nodes']==5628
+          assert s['rendernodes']==80
+          assert c['render_instances']==16
+          assert c['streamed_vertices']==30660
+          assert c['triangles']==14892
+          print('A01_REAL_DONOR_CENSUS_PASS')
+          PY
+
+      - name: Download Blender 5.2.1 Linux x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 --retry-delay 2 \
+            -o /tmp/blender.tar.xz \
+            https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER="$(find /tmp -maxdepth 2 -type f -path '*/blender-5.2.1-linux-x64/blender' | head -n 1)"
+          test -x "$BLENDER"
+          "$BLENDER" --version
+          echo "BLENDER=$BLENDER" >> "$GITHUB_ENV"
+
+      - name: Stage actual donor in Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background \
+            --python /tmp/dtc/probes/g2-007-car-donor-import/stage_bigant_a01_donor_blender.py -- \
+            --source-gltf /tmp/a01_out/A01_source_all_render_geometry_native.glb \
+            --work-gltf /tmp/a01_out/A01_donor_lod0_intact_dtc.glb \
+            --locators /tmp/a01_out/A01_top_level_locators.json \
+            --out "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend"
+
+      - name: Validate Blender collections and mesh counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate_a01_blend.py <<'PY'
+          import bpy
+          s=bpy.data.collections.get('SOURCE_BIGANT_A01_LOCKED')
+          w=bpy.data.collections.get('DTC_SPRINT_A_WORK')
+          l=bpy.data.collections.get('DTC_SPRINT_A_LOCATORS')
+          assert s is not None and w is not None and l is not None
+          sm=[o for o in s.objects if o.type=='MESH']
+          wm=[o for o in w.objects if o.type=='MESH']
+          assert len(sm)==92, len(sm)
+          assert len(wm)==16, len(wm)
+          assert s.get('dtc.locked_source') is True
+          assert w.get('dtc.editable') is True
+          assert bpy.context.scene.get('dtc.source_pssg_sha256')=='6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6'
+          print(f'A01_BLENDER_STAGE_PASS source_meshes={len(sm)} work_meshes={len(wm)} locators={len(l.objects)}')
+          PY
+          "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" \
+            --python /tmp/validate_a01_blend.py
+          sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | tee "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
+          cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
+          cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
+
+      - name: Upload Blender donor proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: a01-real-donor-blender-stage
+          path: |
+            DTC_BIGANT_A01_DONOR_v01.blend
+            DTC_BIGANT_A01_DONOR_v01.blend.sha256
+            A01_real_donor_extraction_report.json
+            A01_top_level_locators.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
