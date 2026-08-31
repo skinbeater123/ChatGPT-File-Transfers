@@ -11,13 +11,11 @@ jobs:
     steps:
       - name: Checkout transfer payload
         uses: actions/checkout@v4
-      - name: Upload Sprint Car Project split archive
+      - name: Upload WoO Global PRE
         uses: actions/upload-artifact@v4
         with:
-          name: sprint-car-project-transfer
-          path: |
-            Sprint Car Project.zip.001
-            Sprint Car Project.zip.002
+          name: woo-global-pre-transfer
+          path: 'Global.pre'
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
