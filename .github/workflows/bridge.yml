@@ -11,11 +11,13 @@ jobs:
     steps:
       - name: Checkout transfer payload
         uses: actions/checkout@v4
-      - name: Upload A01 sprint car archive
+      - name: Upload Sprint Car Project split archive
         uses: actions/upload-artifact@v4
         with:
-          name: a01-sprintcar-transfer
-          path: 'a01_sprintcar.zip'
+          name: sprint-car-project-transfer
+          path: |
+            Sprint Car Project.zip.001
+            Sprint Car Project.zip.002
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
