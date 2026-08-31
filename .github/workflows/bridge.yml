@@ -11,11 +11,11 @@ jobs:
     steps:
       - name: Checkout transfer payload
         uses: actions/checkout@v4
-      - name: Upload sprintcar 2 archive
+      - name: Upload 2010 KKR Maxim archive
         uses: actions/upload-artifact@v4
         with:
-          name: sprintcar-2-transfer
-          path: 'sprintcar 2 .zip'
+          name: kkr-maxim-transfer
+          path: '2010 KKR Maxim.zip'
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
