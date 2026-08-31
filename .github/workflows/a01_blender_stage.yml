@@ -16,7 +16,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check numpy trimesh
+          python -m pip install --disable-pip-version-check numpy trimesh pillow
           rm -rf /tmp/a01 /tmp/a01_out
           mkdir -p /tmp/a01 /tmp/a01_out
           unzip -q 'a01_sprintcar.zip' -d /tmp/a01
@@ -57,66 +57,44 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/stage_a01.py <<'PY'
-          import bpy, json, sys
+          import bpy, json
           from pathlib import Path
-
-          SOURCE='SOURCE_BIGANT_A01_LOCKED'
-          WORK='DTC_SPRINT_A_WORK'
-          LOC='DTC_SPRINT_A_LOCATORS'
+          SOURCE='SOURCE_BIGANT_A01_LOCKED'; WORK='DTC_SPRINT_A_WORK'; LOC='DTC_SPRINT_A_LOCATORS'
           SHA='6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6'
           source_glb=Path('/tmp/a01_out/A01_source_all_render_geometry_dtc.glb')
           work_glb=Path('/tmp/a01_out/A01_donor_lod0_intact_dtc.glb')
           loc_json=Path('/tmp/a01_out/A01_top_level_locators.json')
           out=Path.cwd()/'DTC_BIGANT_A01_DONOR_v01.blend'
-
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          scene=bpy.context.scene
-          scene.unit_settings.system='METRIC'; scene.unit_settings.length_unit='METERS'; scene.unit_settings.scale_length=1.0
-
+          scene=bpy.context.scene; scene.unit_settings.system='METRIC'; scene.unit_settings.length_unit='METERS'; scene.unit_settings.scale_length=1.0
           def coll(name):
               c=bpy.data.collections.new(name); scene.collection.children.link(c); return c
           def move(obj,c):
               for old in list(obj.users_collection): old.objects.unlink(obj)
               c.objects.link(obj)
           def import_glb(path,c,role,expected):
-              before=set(bpy.data.objects)
-              bpy.ops.import_scene.gltf(filepath=str(path))
-              objs=[o for o in bpy.data.objects if o not in before]
-              meshes=[o for o in objs if o.type=='MESH']
+              before=set(bpy.data.objects); bpy.ops.import_scene.gltf(filepath=str(path)); objs=[o for o in bpy.data.objects if o not in before]; meshes=[o for o in objs if o.type=='MESH']
               assert len(meshes)==expected,(role,len(meshes),expected)
               for o in objs:
                   move(o,c); o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.source_pssg_sha256']=SHA; o['dtc.source_role']=role
               return objs,meshes
-
           source=coll(SOURCE); work=coll(WORK); locs=coll(LOC)
           source_objs,source_meshes=import_glb(source_glb,source,'LOCKED_BIGANT_A01_RETAIL_DONOR',92)
           work_objs,work_meshes=import_glb(work_glb,work,'DTC_EDITABLE_DERIVATIVE',16)
-
           for o in source_objs:o.hide_select=True
-          source.hide_render=True; source.hide_viewport=True
-          source['dtc.locked_source']=True; source['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; source['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'
-          for o in work_objs:
-              o.hide_select=False; o['dtc.editable']=True; o['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
+          source.hide_render=True; source.hide_viewport=True; source['dtc.locked_source']=True; source['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; source['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'
+          for o in work_objs:o.hide_select=False; o['dtc.editable']=True; o['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
           work['dtc.editable']=True; work['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'; work['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
-
           nloc=0
           for item in json.loads(loc_json.read_text()):
               if item.get('has_render_geometry'): continue
-              xyz=item['dtc_xyz_m']
-              o=bpy.data.objects.new('LOC_'+item['name'],None); o.empty_display_type='PLAIN_AXES'; o.empty_display_size=0.08; o.location=xyz
-              o['dtc.locator_source_name']=item['name']; o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.locator_status']='DONOR_REFERENCE_NOT_SIM_AUTHORITY'
-              locs.objects.link(o); nloc+=1
+              o=bpy.data.objects.new('LOC_'+item['name'],None); o.empty_display_type='PLAIN_AXES'; o.empty_display_size=0.08; o.location=item['dtc_xyz_m']; o['dtc.locator_source_name']=item['name']; o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.locator_status']='DONOR_REFERENCE_NOT_SIM_AUTHORITY'; locs.objects.link(o); nloc+=1
           locs['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'; locs['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
-
-          scene['dtc.donor_source']='Big Ant 2010 retail A01 SprintCar shaded PSSG'; scene['dtc.source_pssg_sha256']=SHA; scene['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'
-          scene['dtc.production_rule']='Edit DTC_SPRINT_A_WORK only; SOURCE_BIGANT_A01_LOCKED is forensic source.'
-          scene['dtc.source_mesh_objects']=len(source_meshes); scene['dtc.work_mesh_objects']=len(work_meshes); scene['dtc.reference_locators']=nloc
-
+          scene['dtc.donor_source']='Big Ant 2010 retail A01 SprintCar shaded PSSG'; scene['dtc.source_pssg_sha256']=SHA; scene['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; scene['dtc.production_rule']='Edit DTC_SPRINT_A_WORK only; SOURCE_BIGANT_A01_LOCKED is forensic source.'; scene['dtc.source_mesh_objects']=len(source_meshes); scene['dtc.work_mesh_objects']=len(work_meshes); scene['dtc.reference_locators']=nloc
           bpy.ops.object.select_all(action='DESELECT')
           for o in work_meshes:o.select_set(True)
           if work_meshes:bpy.context.view_layer.objects.active=work_meshes[0]
-          bpy.ops.wm.save_as_mainfile(filepath=str(out))
-          print(f'A01_BLEND_BUILD_PASS source_meshes={len(source_meshes)} work_meshes={len(work_meshes)} locators={nloc} out={out}')
+          bpy.ops.wm.save_as_mainfile(filepath=str(out)); print(f'A01_BLEND_BUILD_PASS source_meshes={len(source_meshes)} work_meshes={len(work_meshes)} locators={nloc} out={out}')
           PY
           "$BLENDER" --background --python /tmp/stage_a01.py
 
@@ -129,17 +107,14 @@ jobs:
           s=bpy.data.collections.get('SOURCE_BIGANT_A01_LOCKED'); w=bpy.data.collections.get('DTC_SPRINT_A_WORK'); l=bpy.data.collections.get('DTC_SPRINT_A_LOCATORS')
           assert s is not None and w is not None and l is not None
           sm=[o for o in s.objects if o.type=='MESH']; wm=[o for o in w.objects if o.type=='MESH']
-          assert len(sm)==92,len(sm); assert len(wm)==16,len(wm)
-          assert s.get('dtc.locked_source') is True; assert w.get('dtc.editable') is True
+          assert len(sm)==92,len(sm); assert len(wm)==16,len(wm); assert s.get('dtc.locked_source') is True; assert w.get('dtc.editable') is True
           assert bpy.context.scene.get('dtc.source_pssg_sha256')=='6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6'
-          # Independent imports must not share mesh datablocks.
           assert not ({id(o.data) for o in sm} & {id(o.data) for o in wm})
           print(f'A01_BLENDER_STAGE_PASS source_meshes={len(sm)} work_meshes={len(wm)} locators={len(l.objects)}')
           PY
           "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" --python /tmp/validate_a01_blend.py
           sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | tee "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
-          cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
-          cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
+          cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"; cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
 
       - name: Upload Blender donor proof
         uses: actions/upload-artifact@v4
