@@ -47,7 +47,7 @@ jobs:
             -o /tmp/blender.tar.xz \
             https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
           tar -xJf /tmp/blender.tar.xz -C /tmp
-          BLENDER="$(find /tmp -maxdepth 2 -type f -path '*/blender-5.2.1-linux-x64/blender' | head -n 1)"
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
           test -x "$BLENDER"
           "$BLENDER" --version
           echo "BLENDER=$BLENDER" >> "$GITHUB_ENV"
