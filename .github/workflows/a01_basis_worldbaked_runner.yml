@@ -13,6 +13,20 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Fix strict validator syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/run_a01_basis_worldbaked_strict.sh')
+          out = []
+          for line in p.read_text().splitlines():
+              if 'te,te0,fe,fe0=map(ext' in line:
+                  out.append("ext=lambda q:[q[1][i]-q[0][i] for i in range(3)]")
+                  out.append("te,te0,fe,fe0=map(ext,(bd(hits(w,'TopWing_LOD0_DMG0')),bd(hits(b,'TopWing_LOD0_DMG0')),bd(hits(w,'FrontWing_LOD0_DMG0')),bd(hits(b,'FrontWing_LOD0_DMG0'))))")
+              else:
+                  out.append(line)
+          p.write_text('\n'.join(out) + '\n')
+          PY
       - name: Run strict Blender chain
         env:
           GH_TOKEN: ${{ github.token }}
