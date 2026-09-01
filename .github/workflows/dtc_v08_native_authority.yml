@@ -21,9 +21,9 @@ jobs:
           mkdir -p base scripts
           gh run download 33499675027 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v07-native-hood-boundary -D base
           test "$(sha256sum base/DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend | awk '{print $1}')" = "257aa44a3d3001e9174a6728ff56e7e76253f9c8e4c2ba32e17a58bd84341887"
-          curl -L --fail -o scripts/build_v08.py 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/build_dtc_sprint_a_v08_hood_component_stage.py'
-          curl -L --fail -o scripts/validate_v08.py 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/validate_dtc_sprint_a_v08_native.py'
-          curl -L --fail -o scripts/core.json 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/dtc_sprint_a_v08_hood_reference_core.json'
+          cp .github/scripts/dtc_v08_builder.py scripts/build_v08.py
+          cp .github/scripts/dtc_v08_validator.py scripts/validate_v08.py
+          cp .github/scripts/dtc_v08_core.json scripts/core.json
           python -m py_compile scripts/build_v08.py scripts/validate_v08.py
           python - <<'PY'
           import json
