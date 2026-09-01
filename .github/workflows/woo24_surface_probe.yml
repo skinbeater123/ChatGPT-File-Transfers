@@ -11,7 +11,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
       - name: Checkout transfer payload
         uses: actions/checkout@v4
@@ -27,7 +27,6 @@ jobs:
           set -euxo pipefail
           mkdir -p woo24_input woo24_dump woo24_probe
           unzip -q WOO24.zip -d woo24_input
-          find woo24_input -maxdepth 5 -type f -printf '%s %p\n' | sort -n
 
       - name: Build Il2CppDumper
         shell: bash
@@ -50,7 +49,7 @@ jobs:
           j['GenerateDummyDll']=True
           p.write_text(json.dumps(j, indent=2), encoding='utf-8')
           PY
-          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
 
       - name: Dump IL2CPP metadata and method map
         shell: bash
@@ -60,23 +59,13 @@ jobs:
           META=$(find woo24_input -type f -iname 'global-metadata.dat' | head -1)
           DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -type f -name 'Il2CppDumper.dll' | head -1)
           cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
-          set +e
-          dotnet "$DUMPER" "$GAME" "$META" "$PWD/woo24_dump" 2>&1 | tee woo24_probe/il2cppdumper.log
-          STATUS=${PIPESTATUS[0]}
-          set -e
-          echo "Il2CppDumper exit status: $STATUS"
-          find woo24_dump -maxdepth 2 -type f -printf '%s %p\n' | sort -n | tail -80
+          dotnet "$DUMPER" "$GAME" "$META" "$PWD/woo24_dump" | tee woo24_probe/il2cppdumper.log
 
-      - name: Analyze Assembly-CSharp surface architecture
+      - name: Targeted surface runtime trace
         shell: bash
         run: |
           set -euxo pipefail
-          python3 -m pip install --disable-pip-version-check --quiet dnfile pefile capstone
-          python3 .github/scripts/woo24_surface_probe.py \
-            --root "$PWD/woo24_input" \
-            --dump "$PWD/woo24_dump" \
-            --out "$PWD/woo24_probe" \
-            > woo24_probe/console_summary.txt
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
           python3 .github/scripts/woo24_targeted_surface_probe.py \
             --root "$PWD/woo24_input" \
             --dump "$PWD/woo24_dump" \
@@ -87,12 +76,9 @@ jobs:
       - name: Upload derived forensic text only
         uses: actions/upload-artifact@v4
         with:
-          name: woo24-il2cpp-surface-probe
+          name: woo24-il2cpp-targeted-surface-probe
           path: |
-            woo24_probe/summary.txt
-            woo24_probe/surface_candidates.json
             woo24_probe/targeted_surface_trace.txt
             woo24_probe/il2cppdumper.log
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 1
-          compression-level: 6
