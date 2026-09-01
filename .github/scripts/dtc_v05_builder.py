@@ -6,6 +6,7 @@ import bpy
 from mathutils import Vector
 SOURCE="SOURCE_BIGANT_A01_LOCKED";WORK="DTC_SPRINT_A_WORK";B1="DTC_SPRINT_A_BASELINE_V01";B2="DTC_SPRINT_A_BASELINE_V02";B3="DTC_SPRINT_A_BASELINE_V03";B4="DTC_SPRINT_A_BASELINE_V04";GUIDES="DTC_WOO_REFERENCE_GUIDES_V05"
 BASIS="DTC_X_FORWARD_Y_LEFT_Z_UP_METRES_NORMALIZED";INPUT="DTC_SPRINT_A_v04_COCKPIT_PACKAGING";OUTPUT="DTC_SPRINT_A_v05_BEULAH_SHELL";SRC_SHA="6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6"
+NATIVE_CHANGED=3838;NATIVE_MAX=.0214083495500494;NATIVE_MEAN=.01018749668792615
 WHEELS={"WheelLF_LOD0":(1.2359206676483154,.7039546370506287,-.32582324743270874),"WheelRF_LOD0":(1.2359206676483154,-.7039546370506287,-.32582324743270874),"WheelLR_LOD0":(-.9337295293807983,.6705295443534851,-.3061189353466034),"WheelRR_LOD0":(-.9337295293807983,-.6705295443534851,-.3061189353466034)}
 PROTECTED=("BumperFront_DMG0_LOD0","BumperLeft_DMG0_LOD0","BumperRear_DMG0_LOD0","BumperRight_DMG0_LOD0","Driver_LOD0","Frame_engine_struts_LOD0","FrontWing_LOD0_DMG0","SteeringWheel_LOD0","TopWing_LOD0_DMG0","WheelLF_LOD0","WheelLR_LOD0","WheelRF_LOD0","WheelRR_LOD0")
 def cli():
@@ -78,13 +79,13 @@ def main():
  if before!={o.name:fp(o) for o in protected}:raise RuntimeError('protected changed')
  for p,t in WHEELS.items():
   if (one(w,p).matrix_world.translation-Vector(t)).length>2e-6:raise RuntimeError(('post pivot',p))
- if st['changed_vertices']!=3892 or abs(st['max_vertex_shift_m']-.021408345181858468)>5e-6 or abs(st['mean_changed_vertex_shift_m']-.0101426986895303)>5e-6:raise RuntimeError(('preview mismatch',st))
- parent=sha(ns.src);sc['dtc.asset_version']=OUTPUT;sc['dtc.parent_blend_sha256']=parent;sc['dtc.v05_scope']='Frame_LOD0 only; conservative Beulah-referenced shell pass';sc['dtc.v05_preview_equivalence']='DTC_SPRINT_A_v05_BEULAH_SHELL_PREVIEW';sc['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION';b4['dtc.parent_blend_sha256']=parent
+ if st['changed_vertices']!=NATIVE_CHANGED or abs(st['max_vertex_shift_m']-NATIVE_MAX)>5e-6 or abs(st['mean_changed_vertex_shift_m']-NATIVE_MEAN)>5e-6:raise RuntimeError(('native preview formula mismatch',st))
+ parent=sha(ns.src);sc['dtc.asset_version']=OUTPUT;sc['dtc.parent_blend_sha256']=parent;sc['dtc.v05_scope']='Frame_LOD0 only; conservative Beulah-referenced shell pass';sc['dtc.v05_preview_equivalence']='formula-equivalent; GLB export vertex seams checked separately';sc['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION';b4['dtc.parent_blend_sha256']=parent
  if bpy.data.collections.get(GUIDES) is None:
   g=bpy.data.collections.new(GUIDES);bpy.context.scene.collection.children.link(g);g['dtc.reference_authority']='WoO Beulah lower-tier visual direction; Maxim sibling retained as contrast';g['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
  bpy.ops.wm.save_as_mainfile(filepath=str(ns.dst));
  if ns.export_glb:export(w,ns.export_glb)
- r={'schema':'dtc_sprint_a_v05_beulah_shell_report_v1','status':'V05_NATIVE_BUILD_PASS','parent':{'sha256':parent,'asset_version':INPUT},'authoring_basis':BASIS,'rollback':{'v04':B4,'representation':b4.get('dtc.rollback_representation'),'meshes':len(meshes(b4))},'changes':{'modified_meshes':flags,'upper_body_max_lateral_reduction_pct':5.5,'front_upper_shell_max_lowering_m':.035,'front_upper_shell_max_rearward_m':.018,**st},'protected_fingerprints_unchanged':True,'wheel_pivots_retained':{k:list(v) for k,v in WHEELS.items()},'physics_authority':'NONE — G2-003 owns simulation'}
+ r={'schema':'dtc_sprint_a_v05_beulah_shell_report_v1','status':'V05_NATIVE_BUILD_PASS','parent':{'sha256':parent,'asset_version':INPUT},'authoring_basis':BASIS,'rollback':{'v04':B4,'representation':b4.get('dtc.rollback_representation'),'meshes':len(meshes(b4))},'changes':{'modified_meshes':flags,'upper_body_max_lateral_reduction_pct':5.5,'front_upper_shell_max_lowering_m':.035,'front_upper_shell_max_rearward_m':.018,**st},'representation_note':'Native Blender vertex count differs from GLB export because glTF splits seam/normal vertices; accepted preview has 3892 changed exported entries while native source has 3838 changed vertices.','protected_fingerprints_unchanged':True,'wheel_pivots_retained':{k:list(v) for k,v in WHEELS.items()},'physics_authority':'NONE — G2-003 owns simulation'}
  if ns.report:Path(ns.report).write_text(json.dumps(r,indent=2)+'\n')
  print('DTC_SPRINT_A_V05_NATIVE_BUILD_PASS',json.dumps(r['changes'],sort_keys=True))
 if __name__=='__main__':main()
