@@ -11,10 +11,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import struct
 from collections import Counter
 from pathlib import Path
 
+import bmesh
 import bpy
 
 V08_SHA = "ad9080c7bc7b9475547edda3ad1eb2ca9fabed6cbd2341b2ac339683b32a6456"
@@ -39,7 +39,6 @@ def face_signature(obj, poly, digits=8):
     for vi in poly.vertices:
         w = obj.matrix_world @ obj.data.vertices[vi].co
         verts.append(tuple(round(float(w[k]), digits) for k in range(3)))
-    # Polygon winding/index order is irrelevant for conservation checking.
     return tuple(sorted(verts))
 
 
@@ -63,24 +62,17 @@ def duplicate_object(src, name):
     return obj
 
 
-def keep_only_faces(obj, keep_ids):
-    keep = set(keep_ids)
-    mesh = obj.data
-    # Delete in descending source polygon order so source indices remain valid
-    # throughout the operation.
-    for i in range(len(mesh.polygons) - 1, -1, -1):
-        if i not in keep:
-            mesh.polygons.remove(i)
-    mesh.update()
-
-
-def delete_faces(obj, delete_ids):
-    delete = set(delete_ids)
-    mesh = obj.data
-    for i in range(len(mesh.polygons) - 1, -1, -1):
-        if i in delete:
-            mesh.polygons.remove(i)
-    mesh.update()
+def filter_faces(obj, source_ids, keep=True):
+    """Filter faces by their original polygon indices using bmesh."""
+    wanted = set(source_ids)
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    doomed = [f for f in bm.faces if ((f.index in wanted) != keep)]
+    bmesh.ops.delete(bm, geom=doomed, context='FACES')
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
 
 
 def main():
@@ -122,8 +114,8 @@ def main():
     hood.hide_viewport = False
     hood.hide_render = False
 
-    delete_faces(body, hood_faces)
-    keep_only_faces(hood, hood_faces)
+    filter_faces(body, hood_faces, keep=False)
+    filter_faces(hood, hood_faces, keep=True)
 
     body['dtc_role'] = 'working_body'
     body['dtc_editable'] = True
@@ -134,8 +126,7 @@ def main():
     hood['dtc_boundary_policy'] = 'modeller_defined_from_v08_438_face_visual_envelope'
     hood['dtc_forensic_claim'] = False
 
-    # Remove staging-only evidence attributes from working pieces. The rollback
-    # retains them, so nothing is lost.
+    # Remove staging-only evidence attributes from working pieces. The rollback retains them.
     for obj in (body, hood):
         for name in ('dtc_hood_candidate_b', 'dtc_hood_reference_core'):
             a = obj.data.attributes.get(name)
@@ -173,21 +164,14 @@ def main():
     report = {
         'schema': 'dtc_sprint_a_v09_editable_hood_split_v1',
         'asset_version': ASSET_VERSION,
-        'parent': {
-            'filename': ns.blend.name,
-            'sha256': V08_SHA,
-        },
+        'parent': {'filename': ns.blend.name, 'sha256': V08_SHA},
         'policy': {
             'operation': 'practical modelling split',
             'forensic_boundary_claim': False,
             'boundary_source': 'v08 dtc_hood_candidate_b visual envelope',
             'rollback_preserved': True,
         },
-        'source': {
-            'object': 'Frame_LOD0',
-            'vertices': original_verts,
-            'faces': original_faces,
-        },
+        'source': {'object': 'Frame_LOD0', 'vertices': original_verts, 'faces': original_faces},
         'result': {
             'rollback_object': ROLLBACK_NAME,
             'body_object': BODY_NAME,
