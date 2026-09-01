@@ -77,7 +77,7 @@ def main():
  ns=cli(); ns.dst.parent.mkdir(parents=True,exist_ok=True); bpy.ops.wm.open_mainfile(filepath=str(ns.src)); source=coll(SOURCE); work=coll(WORK); b1=coll(BASE1)
  if (len(meshes(source)),len(meshes(work)),len(meshes(b1)))!=(92,16,16): raise RuntimeError('v02 census failed')
  if not source.get('dtc.locked_source') or not b1.get('dtc.locked_backup'): raise RuntimeError('source/rollback lock missing')
- if bpy.context.scene.get('dtc.model_version')!='DTC_SPRINT_A_v02': raise RuntimeError('v03 requires validated v02')
+ if bpy.context.scene.get('dtc.asset_version')!='DTC_SPRINT_A_v02': raise RuntimeError('v03 requires validated v02')
  parent=sha(ns.src); b2=backup(work); w={k:one(work,p) for k,p in [('lf','WheelLF_LOD0'),('rf','WheelRF_LOD0'),('lr','WheelLR_LOD0'),('rr','WheelRR_LOD0')]}; c={k:origin(o) for k,o in w.items()}
  rearx=(c['lr'].x+c['rr'].x)/2; frontx=(c['lf'].x+c['rf'].x)/2; frontz=(c['lf'].z+c['rf'].z)/2; rearz=(c['lr'].z+c['rr'].z)/2; tx=rearx+WOO['wheelbase_in']*IN
  t={'lf':Vector((tx,+WOO['front_track_in']*IN/2,frontz)),'rf':Vector((tx,-WOO['front_track_in']*IN/2,frontz)),'lr':Vector((rearx,+WOO['rear_track_in']*IN/2,rearz)),'rr':Vector((rearx,-WOO['rear_track_in']*IN/2,rearz))}
