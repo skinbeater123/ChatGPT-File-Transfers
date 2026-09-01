@@ -66,35 +66,51 @@ jobs:
           loc_json=Path('/tmp/a01_out/A01_top_level_locators.json')
           out=Path.cwd()/'DTC_BIGANT_A01_DONOR_v01.blend'
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          scene=bpy.context.scene; scene.unit_settings.system='METRIC'; scene.unit_settings.length_unit='METERS'; scene.unit_settings.scale_length=1.0
+          scene=bpy.context.scene
+          scene.unit_settings.system='METRIC'; scene.unit_settings.length_unit='METERS'; scene.unit_settings.scale_length=1.0
           def coll(name):
               c=bpy.data.collections.new(name); scene.collection.children.link(c); return c
           def move(obj,c):
               for old in list(obj.users_collection): old.objects.unlink(obj)
               c.objects.link(obj)
           def import_glb(path,c,role,expected):
-              before=set(bpy.data.objects); bpy.ops.import_scene.gltf(filepath=str(path)); objs=[o for o in bpy.data.objects if o not in before]; meshes=[o for o in objs if o.type=='MESH']
+              before=set(bpy.data.objects)
+              bpy.ops.import_scene.gltf(filepath=str(path))
+              objs=[o for o in bpy.data.objects if o not in before]
+              meshes=[o for o in objs if o.type=='MESH']
               assert len(meshes)==expected,(role,len(meshes),expected)
               for o in objs:
-                  move(o,c); o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.source_pssg_sha256']=SHA; o['dtc.source_role']=role
+                  move(o,c)
+                  o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'
+                  o['dtc.source_pssg_sha256']=SHA
+                  o['dtc.source_role']=role
               return objs,meshes
           source=coll(SOURCE); work=coll(WORK); locs=coll(LOC)
           source_objs,source_meshes=import_glb(source_glb,source,'LOCKED_BIGANT_A01_RETAIL_DONOR',92)
           work_objs,work_meshes=import_glb(work_glb,work,'DTC_EDITABLE_DERIVATIVE',16)
           for o in source_objs:o.hide_select=True
-          source.hide_render=True; source.hide_viewport=True; source['dtc.locked_source']=True; source['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; source['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'
-          for o in work_objs:o.hide_select=False; o['dtc.editable']=True; o['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
+          source.hide_render=True; source.hide_viewport=True
+          source['dtc.locked_source']=True; source['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; source['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'
+          for o in work_objs:
+              o.hide_select=False; o['dtc.editable']=True; o['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
           work['dtc.editable']=True; work['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'; work['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
           nloc=0
           for item in json.loads(loc_json.read_text()):
               if item.get('has_render_geometry'): continue
-              o=bpy.data.objects.new('LOC_'+item['name'],None); o.empty_display_type='PLAIN_AXES'; o.empty_display_size=0.08; o.location=item['dtc_xyz_m']; o['dtc.locator_source_name']=item['name']; o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.locator_status']='DONOR_REFERENCE_NOT_SIM_AUTHORITY'; locs.objects.link(o); nloc+=1
+              o=bpy.data.objects.new('LOC_'+item['name'],None)
+              o.empty_display_type='PLAIN_AXES'; o.empty_display_size=0.08; o.location=item['dtc_xyz_m']
+              o['dtc.locator_source_name']=item['name']; o['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; o['dtc.locator_status']='DONOR_REFERENCE_NOT_SIM_AUTHORITY'
+              locs.objects.link(o); nloc+=1
           locs['dtc.coordinate_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES'; locs['dtc.physics_authority']='NONE_G2_003_OWNS_SIMULATION'
-          scene['dtc.donor_source']='Big Ant 2010 retail A01 SprintCar shaded PSSG'; scene['dtc.source_pssg_sha256']=SHA; scene['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'; scene['dtc.production_rule']='Edit DTC_SPRINT_A_WORK only; SOURCE_BIGANT_A01_LOCKED is forensic source.'; scene['dtc.source_mesh_objects']=len(source_meshes); scene['dtc.work_mesh_objects']=len(work_meshes); scene['dtc.reference_locators']=nloc
+          scene['dtc.donor_source']='Big Ant 2010 retail A01 SprintCar shaded PSSG'
+          scene['dtc.source_pssg_sha256']=SHA; scene['dtc.evidence_domain']='COMPARATIVE TITLE DIRECT'
+          scene['dtc.production_rule']='Edit DTC_SPRINT_A_WORK only; SOURCE_BIGANT_A01_LOCKED is forensic source.'
+          scene['dtc.source_mesh_objects']=len(source_meshes); scene['dtc.work_mesh_objects']=len(work_meshes); scene['dtc.reference_locators']=nloc
           bpy.ops.object.select_all(action='DESELECT')
           for o in work_meshes:o.select_set(True)
           if work_meshes:bpy.context.view_layer.objects.active=work_meshes[0]
-          bpy.ops.wm.save_as_mainfile(filepath=str(out)); print(f'A01_BLEND_BUILD_PASS source_meshes={len(source_meshes)} work_meshes={len(work_meshes)} locators={nloc} out={out}')
+          bpy.ops.wm.save_as_mainfile(filepath=str(out))
+          print(f'A01_BLEND_BUILD_PASS source_meshes={len(source_meshes)} work_meshes={len(work_meshes)} locators={nloc} out={out}')
           PY
           "$BLENDER" --background --python /tmp/stage_a01.py
 
@@ -107,7 +123,8 @@ jobs:
           s=bpy.data.collections.get('SOURCE_BIGANT_A01_LOCKED'); w=bpy.data.collections.get('DTC_SPRINT_A_WORK'); l=bpy.data.collections.get('DTC_SPRINT_A_LOCATORS')
           assert s is not None and w is not None and l is not None
           sm=[o for o in s.objects if o.type=='MESH']; wm=[o for o in w.objects if o.type=='MESH']
-          assert len(sm)==92,len(sm); assert len(wm)==16,len(wm); assert s.get('dtc.locked_source') is True; assert w.get('dtc.editable') is True
+          assert len(sm)==92,len(sm); assert len(wm)==16,len(wm)
+          assert s.get('dtc.locked_source') is True; assert w.get('dtc.editable') is True
           assert bpy.context.scene.get('dtc.source_pssg_sha256')=='6621074f3048a4ee41606c6fd15b501bc3fd8723a423ee9a0b7368fb4f428bd6'
           assert not ({id(o.data) for o in sm} & {id(o.data) for o in wm})
           print(f'A01_BLENDER_STAGE_PASS source_meshes={len(sm)} work_meshes={len(wm)} locators={len(l.objects)}')
@@ -116,34 +133,18 @@ jobs:
           sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | tee "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
           BASE_BLEND_SHA="$(sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | awk '{print $1}')"
           echo "BASE_BLEND_SHA=$BASE_BLEND_SHA" >> "$GITHUB_ENV"
+          cp /tmp/a01_out/A01_donor_lod0_intact_dtc.glb "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.glb"
           cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
           cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
-
-      - name: Apply Blender 5.2 proof-render compatibility patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('.github/scripts/modify_a01_to_dtc_v02_blender.py')
-          s=p.read_text()
-          old='    scene.display.shading.single_color = (0.36, 0.37, 0.40)\n    scene.world.color = (0.055, 0.055, 0.055)\n'
-          new='    scene.display.shading.single_color = (0.36, 0.37, 0.40)\n    if scene.world is None:\n        scene.world = bpy.data.worlds.new("DTC_PROOF_WORLD")\n    scene.world.color = (0.055, 0.055, 0.055)\n'
-          assert old in s
-          p.write_text(s.replace(old,new))
-          PY
 
       - name: Create reversible DTC v02 modification pass
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$GITHUB_WORKSPACE/renders_v01" "$GITHUB_WORKSPACE/renders_v02"
           "$BLENDER" --background \
             --python "$GITHUB_WORKSPACE/.github/scripts/modify_a01_to_dtc_v02_blender.py" -- \
             --in "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" \
             --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" \
-            --baseline-render-dir "$GITHUB_WORKSPACE/renders_v01" \
-            --render-dir "$GITHUB_WORKSPACE/renders_v02" \
             --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02_mod_report.json" \
             --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.glb"
           sha256sum "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" | tee "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend.sha256"
@@ -163,9 +164,7 @@ jobs:
           sm=[o for o in source.objects if o.type=='MESH']
           wm=[o for o in work.objects if o.type=='MESH']
           bm=[o for o in backup.objects if o.type=='MESH']
-          assert len(sm)==92,len(sm)
-          assert len(wm)==16,len(wm)
-          assert len(bm)==16,len(bm)
+          assert len(sm)==92,len(sm); assert len(wm)==16,len(wm); assert len(bm)==16,len(bm)
           assert source.get('dtc.locked_source') is True
           assert backup.get('dtc.locked_backup') is True
           assert bpy.context.scene.get('dtc.base_blend_sha256')==os.environ['BASE_BLEND_SHA']
@@ -183,33 +182,6 @@ jobs:
           PY
           "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" --python /tmp/validate_v02.py
 
-      - name: Build v01-v02 visual comparison montage
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from PIL import Image, ImageDraw, ImageOps
-          from pathlib import Path
-          root=Path('.')
-          views=['LEFT_SIDE','FRONT_3_4','TOP']
-          cell=(900,650); header=42
-          canvas=Image.new('RGB',(cell[0]*2,(cell[1]+header)*3),(24,24,24))
-          draw=ImageDraw.Draw(canvas)
-          for row,v in enumerate(views):
-              for col,(folder,prefix,title) in enumerate([
-                  ('renders_v01','V01_BASE','v01 untouched A01 donor'),
-                  ('renders_v02','V02_MOD','v02 DTC first modification'),
-              ]):
-                  im=Image.open(root/folder/f'{prefix}_{v}.png').convert('RGB')
-                  im=ImageOps.fit(im,cell)
-                  x=col*cell[0]; y=row*(cell[1]+header)
-                  canvas.paste(im,(x,y+header))
-                  draw.text((x+12,y+12),f'{title} — {v}',fill=(240,240,240))
-          out=root/'DTC_SPRINT_A_v01_vs_v02_MONTAGE.png'
-          canvas.save(out)
-          print(out)
-          PY
-
       - name: Upload v01 and v02 proof package
         uses: actions/upload-artifact@v4
         with:
@@ -217,14 +189,12 @@ jobs:
           path: |
             DTC_BIGANT_A01_DONOR_v01.blend
             DTC_BIGANT_A01_DONOR_v01.blend.sha256
+            DTC_BIGANT_A01_DONOR_v01.glb
             DTC_SPRINT_A_v02.blend
             DTC_SPRINT_A_v02.blend.sha256
             DTC_SPRINT_A_v02.glb
             DTC_SPRINT_A_v02.glb.sha256
             DTC_SPRINT_A_v02_mod_report.json
-            DTC_SPRINT_A_v01_vs_v02_MONTAGE.png
-            renders_v01/*.png
-            renders_v02/*.png
             A01_real_donor_extraction_report.json
             A01_top_level_locators.json
           if-no-files-found: error
