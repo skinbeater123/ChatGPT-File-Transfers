@@ -27,3 +27,11 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+      - name: Upload KKR Maxim reference
+        uses: actions/upload-artifact@v4
+        with:
+          name: kkr-maxim-reference-transfer
+          path: '2010 KKR Maxim.zip'
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
