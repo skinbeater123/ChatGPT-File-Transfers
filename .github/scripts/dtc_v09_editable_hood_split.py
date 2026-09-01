@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -75,12 +76,16 @@ def filter_faces(obj, source_ids, keep=True):
     obj.data.update()
 
 
+def blender_args():
+    return sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--blend', required=True, type=Path)
     ap.add_argument('--out-blend', required=True, type=Path)
     ap.add_argument('--report', required=True, type=Path)
-    ns = ap.parse_args()
+    ns = ap.parse_args(blender_args())
 
     got = sha256(ns.blend)
     if got != V08_SHA:
@@ -99,7 +104,6 @@ def main():
     original_verts = len(src.data.vertices)
     original_multiset = mesh_face_multiset(src)
 
-    # The source object itself becomes the immutable rollback witness.
     src.name = ROLLBACK_NAME
     src.data.name = ROLLBACK_NAME + "_Mesh"
     src.hide_viewport = True
@@ -126,7 +130,6 @@ def main():
     hood['dtc_boundary_policy'] = 'modeller_defined_from_v08_438_face_visual_envelope'
     hood['dtc_forensic_claim'] = False
 
-    # Remove staging-only evidence attributes from working pieces. The rollback retains them.
     for obj in (body, hood):
         for name in ('dtc_hood_candidate_b', 'dtc_hood_reference_core'):
             a = obj.data.attributes.get(name)
