@@ -1,0 +1,35 @@
+name: Export supplied WoO24 IL2CPP pair
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_export_supplied_binaries.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract supplied files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf woo24_input woo24_export
+          mkdir -p woo24_input woo24_export
+          unzip -q WOO24.zip -d woo24_input
+          find woo24_input -type f -iname 'GameAssembly.dll' -exec cp '{}' woo24_export/GameAssembly.dll ';'
+          find woo24_input -type f -iname 'global-metadata.dat' -exec cp '{}' woo24_export/global-metadata.dat ';'
+          find woo24_input -type f -iname 'WorldOfOutlaws24.exe' -exec cp '{}' woo24_export/WorldOfOutlaws24.exe ';'
+          find woo24_input -type f -iname 'ScriptingAssemblies.json' -exec cp '{}' woo24_export/ScriptingAssemblies.json ';'
+          find woo24_input -type f -iname 'boot.config' -exec cp '{}' woo24_export/boot.config ';'
+          sha256sum woo24_export/* > woo24_export/SHA256SUMS.txt
+          ls -lh woo24_export
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-supplied-il2cpp-pair
+          path: woo24_export/
+          retention-days: 1
