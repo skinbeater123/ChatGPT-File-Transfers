@@ -1,0 +1,48 @@
+name: WoO24 IL2CPP maps bridge
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_il2cpp_maps_bridge.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  maps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Generate IL2CPP maps
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_dump
+          unzip -q WOO24.zip -d woo24_input
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          j.update({'RequireAnyKey':False,'DumpMethod':True,'DumpField':True,'DumpProperty':True,'DumpAttribute':False,'DumpFieldOffset':True,'DumpMethodOffset':True,'DumpTypeDefIndex':True,'GenerateDummyDll':False})
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          GAME=$(find woo24_input -type f -iname 'GameAssembly.dll' | head -1)
+          META=$(find woo24_input -type f -iname 'global-metadata.dat' | head -1)
+          DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -type f -name 'Il2CppDumper.dll' | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
+          dotnet "$DUMPER" "$GAME" "$META" "$PWD/woo24_dump" >/dev/null
+          ls -lh woo24_dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-il2cpp-maps
+          path: |
+            woo24_dump/stringliteral.json
+            woo24_dump/script.json
+          retention-days: 1
