@@ -1,0 +1,42 @@
+name: A01 strict world-baked repair runner
+
+on:
+  push:
+    paths:
+      - '.github/workflows/a01_basis_worldbaked_runner.yml'
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run strict Blender chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/run_a01_basis_worldbaked_strict.sh
+      - name: Upload validated chain
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-worldbaked-strict-authority
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            DTC_SPRINT_A_v02.blend
+            DTC_SPRINT_A_v02.blend.sha256
+            DTC_SPRINT_A_v02.glb
+            DTC_SPRINT_A_v02.glb.sha256
+            DTC_SPRINT_A_v02_basis_fixed_report.json
+            DTC_SPRINT_A_v03_HARDPOINT.blend
+            DTC_SPRINT_A_v03_HARDPOINT.blend.sha256
+            DTC_SPRINT_A_v03_HARDPOINT.glb
+            DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+            DTC_SPRINT_A_v03_HARDPOINT_report.json
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json
