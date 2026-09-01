@@ -1,0 +1,43 @@
+{
+  "schema": "dtc_sprint_a_v10_fuel_tank_rear_binding_v1",
+  "status": "V10_NATIVE_BUILD_PASS",
+  "asset_version": "DTC_SPRINT_A_v10_FUEL_TANK_REAR_BINDING",
+  "parent_sha256": "b746681f99acce179ffdf60faadf2ee5337d0b5936745f91a0e265e5071765fa",
+  "work_meshes": 17,
+  "rollback_v09_meshes": 17,
+  "geometry_changed": false,
+  "tank": {
+    "object": "DTC_FuelTank_RearShell",
+    "faces": 418,
+    "vertices": 862,
+    "bounds_min": [
+      -1.7709720134735107,
+      -0.28389737010002136,
+      -0.3813512325286865
+    ],
+    "bounds_max": [
+      -0.84932541847229,
+      0.2868671119213104,
+      0.28071513772010803
+    ],
+    "locator": "mount_fuel_tank_rear",
+    "locator_world": [
+      -1.3101487159729004,
+      0.0014848709106445312,
+      -0.050318047404289246
+    ],
+    "detach_gameplay": false
+  },
+  "rear_bumper": {
+    "object": "DTC_RearBumper",
+    "faces": 455,
+    "vertices": 917
+  },
+  "hood": {
+    "object": "DTC_Hood",
+    "faces": 438
+  },
+  "wheel_pivots_preserved": true,
+  "output_sha256": "26ff5d6754eeb60129b9c7231cf4dc668cb8ec8664990bcd5a0719847d3d1440",
+  "next_gate": "body/panel and chassis visual refinement; no cockpit/wing relocation justified by current reference comparison"
+}
