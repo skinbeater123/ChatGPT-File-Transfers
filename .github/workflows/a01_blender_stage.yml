@@ -98,7 +98,7 @@ jobs:
           PY
           "$BLENDER" --background --python /tmp/stage_a01.py
 
-      - name: Validate native Blender donor scene
+      - name: Validate immutable v01 base
         shell: bash
         run: |
           set -euo pipefail
@@ -114,15 +114,102 @@ jobs:
           PY
           "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" --python /tmp/validate_a01_blend.py
           sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | tee "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
-          cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"; cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
+          grep -q '^5e83850a27093d967e9284b65eff7461e19d06ee40fd1751ecdf6e993ba46001 ' "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
+          cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
+          cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
 
-      - name: Upload Blender donor proof
+      - name: Create reversible DTC v02 modification pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$GITHUB_WORKSPACE/renders_v01" "$GITHUB_WORKSPACE/renders_v02"
+          "$BLENDER" --background \
+            --python "$GITHUB_WORKSPACE/.github/scripts/modify_a01_to_dtc_v02_blender.py" -- \
+            --in "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" \
+            --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" \
+            --baseline-render-dir "$GITHUB_WORKSPACE/renders_v01" \
+            --render-dir "$GITHUB_WORKSPACE/renders_v02" \
+            --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02_mod_report.json" \
+            --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.glb"
+          sha256sum "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" | tee "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend.sha256"
+          sha256sum "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.glb" | tee "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.glb.sha256"
+
+      - name: Validate v02 rollback and edit boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate_v02.py <<'PY'
+          import bpy
+          source=bpy.data.collections.get('SOURCE_BIGANT_A01_LOCKED')
+          work=bpy.data.collections.get('DTC_SPRINT_A_WORK')
+          backup=bpy.data.collections.get('DTC_SPRINT_A_BASELINE_V01')
+          guides=bpy.data.collections.get('DTC_WOO_REFERENCE_GUIDES_V02')
+          assert all(x is not None for x in (source,work,backup,guides))
+          sm=[o for o in source.objects if o.type=='MESH']
+          wm=[o for o in work.objects if o.type=='MESH']
+          bm=[o for o in backup.objects if o.type=='MESH']
+          assert len(sm)==92,len(sm)
+          assert len(wm)==16,len(wm)
+          assert len(bm)==16,len(bm)
+          assert source.get('dtc.locked_source') is True
+          assert backup.get('dtc.locked_backup') is True
+          assert bpy.context.scene.get('dtc.base_blend_sha256')=='5e83850a27093d967e9284b65eff7461e19d06ee40fd1751ecdf6e993ba46001'
+          modified=[o for o in wm if o.get('dtc.v02_modified') is True]
+          names=sorted(o.name for o in modified)
+          assert len(modified)==5,names
+          assert sum(n.startswith('TopWing_LOD0_DMG0') for n in names)==2,names
+          for p in ('FrontWing_LOD0_DMG0','BumperLeft_DMG0_LOD0','BumperRight_DMG0_LOD0'):
+              assert sum(n.startswith(p) for n in names)==1,(p,names)
+          for p in ('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0','Frame_LOD0','Frame_engine_struts_LOD0','Driver_LOD0','SteeringWheel_LOD0'):
+              hits=[o for o in wm if o.name.startswith(p)]
+              assert hits and all(o.get('dtc.v02_modified') is False for o in hits),p
+          assert not ({id(o.data) for o in wm} & {id(o.data) for o in bm})
+          print('DTC_SPRINT_A_V02_BOUNDARY_PASS',names,'guides',len(guides.objects))
+          PY
+          "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" --python /tmp/validate_v02.py
+
+      - name: Build v01-v02 visual comparison montage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from PIL import Image, ImageDraw, ImageOps
+          from pathlib import Path
+          root=Path('.')
+          views=['LEFT_SIDE','FRONT_3_4','TOP']
+          cell=(900,650); header=42
+          canvas=Image.new('RGB',(cell[0]*2,(cell[1]+header)*3),(24,24,24))
+          draw=ImageDraw.Draw(canvas)
+          for row,v in enumerate(views):
+              for col,(folder,prefix,title) in enumerate([
+                  ('renders_v01','V01_BASE','v01 untouched A01 donor'),
+                  ('renders_v02','V02_MOD','v02 DTC first modification'),
+              ]):
+                  im=Image.open(root/folder/f'{prefix}_{v}.png').convert('RGB')
+                  im=ImageOps.fit(im,cell)
+                  x=col*cell[0]; y=row*(cell[1]+header)
+                  canvas.paste(im,(x,y+header))
+                  draw.text((x+12,y+12),f'{title} — {v}',fill=(240,240,240))
+          out=root/'DTC_SPRINT_A_v01_vs_v02_MONTAGE.png'
+          canvas.save(out)
+          print(out)
+          PY
+
+      - name: Upload v01 and v02 proof package
         uses: actions/upload-artifact@v4
         with:
-          name: a01-real-donor-blender-stage
+          name: dtc-sprint-a-v02-proof
           path: |
             DTC_BIGANT_A01_DONOR_v01.blend
             DTC_BIGANT_A01_DONOR_v01.blend.sha256
+            DTC_SPRINT_A_v02.blend
+            DTC_SPRINT_A_v02.blend.sha256
+            DTC_SPRINT_A_v02.glb
+            DTC_SPRINT_A_v02.glb.sha256
+            DTC_SPRINT_A_v02_mod_report.json
+            DTC_SPRINT_A_v01_vs_v02_MONTAGE.png
+            renders_v01/*.png
+            renders_v02/*.png
             A01_real_donor_extraction_report.json
             A01_top_level_locators.json
           if-no-files-found: error
