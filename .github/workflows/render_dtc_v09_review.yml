@@ -1,4 +1,5 @@
 name: DTC v09 visual review renders
+# Retry after Blender 5.2 Eevee enum correction.
 on:
   push:
     paths:
