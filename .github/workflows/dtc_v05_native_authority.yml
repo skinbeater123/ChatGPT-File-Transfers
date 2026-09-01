@@ -1,0 +1,52 @@
+name: DTC v05 native authority
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dtc_v05_native_authority.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate v05
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p base scripts
+          gh run download 33482073989 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-worldbaked-strict-authority -D base
+          test "$(sha256sum base/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend | awk '{print $1}')" = "ee3e7fbaa1967ab05483edbf453660fe78965b9c798ba3b6809d62b1e9e1b348"
+          gh api 'repos/skinbeater123/Dirt-Track-Cowboys/contents/probes/g2-007-car-donor-import/modify_a01_v04_to_dtc_v05_beulah_shell.py?ref=design/g2-007-car-asset-architecture-20260901' --jq .content | base64 -d > scripts/build_v05.py
+          gh api 'repos/skinbeater123/Dirt-Track-Cowboys/contents/probes/g2-007-car-donor-import/validate_dtc_sprint_a_v05_native.py?ref=design/g2-007-car-asset-architecture-20260901' --jq .content | base64 -d > scripts/validate_v05.py
+          python -m py_compile scripts/build_v05.py scripts/validate_v05.py
+          curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+          "$BLENDER" --version
+          "$BLENDER" --background --python scripts/build_v05.py -- --in base/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend --out DTC_SPRINT_A_v05_BEULAH_SHELL.blend --report DTC_SPRINT_A_v05_BEULAH_SHELL_report.json --export-glb DTC_SPRINT_A_v05_BEULAH_SHELL.glb
+          rm -f /tmp/V05_PASS
+          "$BLENDER" --background DTC_SPRINT_A_v05_BEULAH_SHELL.blend --python scripts/validate_v05.py -- --pass-file /tmp/V05_PASS --json DTC_SPRINT_A_v05_FRESH_RELOAD_VALIDATION.json
+          test -f /tmp/V05_PASS
+          grep -q V05_FRESH_RELOAD_PASS /tmp/V05_PASS
+          sha256sum DTC_SPRINT_A_v05_BEULAH_SHELL.blend | tee DTC_SPRINT_A_v05_BEULAH_SHELL.blend.sha256
+          sha256sum DTC_SPRINT_A_v05_BEULAH_SHELL.glb | tee DTC_SPRINT_A_v05_BEULAH_SHELL.glb.sha256
+          echo DTC_V05_NATIVE_AUTHORITY_PASS
+      - name: Upload v05 authority
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v05-native-authority
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            DTC_SPRINT_A_v05_BEULAH_SHELL.blend
+            DTC_SPRINT_A_v05_BEULAH_SHELL.blend.sha256
+            DTC_SPRINT_A_v05_BEULAH_SHELL.glb
+            DTC_SPRINT_A_v05_BEULAH_SHELL.glb.sha256
+            DTC_SPRINT_A_v05_BEULAH_SHELL_report.json
+            DTC_SPRINT_A_v05_FRESH_RELOAD_VALIDATION.json
