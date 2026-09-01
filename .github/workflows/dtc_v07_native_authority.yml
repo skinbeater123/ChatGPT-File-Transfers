@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/dtc_v07_native_authority.yml'
 
+# Rerun after correcting the pre-build v01-v05 collection census.
 jobs:
   build:
     runs-on: ubuntu-latest
