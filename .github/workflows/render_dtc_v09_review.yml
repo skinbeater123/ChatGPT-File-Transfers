@@ -1,5 +1,5 @@
 name: DTC v09 visual review renders
-# Retry after Blender 5.2 Eevee enum correction.
+# Headless review rendering with Blender 5.2.1 runtime deps.
 on:
   push:
     paths:
@@ -19,8 +19,10 @@ jobs:
           mkdir -p base
           gh run download 33519947815 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v09-editable-hood-split -D base
           echo 'b746681f99acce179ffdf60faadf2ee5337d0b5936745f91a0e265e5071765fa  base/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend' | sha256sum -c -
-      - name: Install Blender 5.2.1
+      - name: Install Blender 5.2.1 and headless GL runtime
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libgl1
           curl -L --fail --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz -o blender.tar.xz
           tar -xf blender.tar.xz
       - name: Render review views
