@@ -1,6 +1,6 @@
 name: DTC v09 practical editable hood split
 
-# Single bounded modelling run from exact v08 authority.
+# Single bounded modelling run from exact v08 authority. Retry after Blender CLI handoff fix.
 on:
   push:
     paths:
