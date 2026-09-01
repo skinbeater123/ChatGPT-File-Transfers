@@ -1,0 +1,48 @@
+name: DTC v07 native hood boundary
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dtc_v07_native_authority.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate v07
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p base scripts
+          gh run download 33495484092 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v06-native-authority -D base
+          test "$(sha256sum base/DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend | awk '{print $1}')" = "010015fbe23128e167b5f14deeeba23a82b3f6b5b6acfa633b1572daf9482ff3"
+          cp .github/scripts/dtc_v07_builder.py scripts/build_v07.py
+          cp .github/scripts/dtc_v07_validator.py scripts/validate_v07.py
+          python -m py_compile scripts/build_v07.py scripts/validate_v07.py
+          curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+          "$BLENDER" --background --python scripts/build_v07.py -- --in base/DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend --out DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend --report DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING_report.json
+          rm -f /tmp/V07_PASS
+          "$BLENDER" --background DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend --python scripts/validate_v07.py -- --pass-file /tmp/V07_PASS --json DTC_SPRINT_A_v07_FRESH_RELOAD_VALIDATION.json
+          test -f /tmp/V07_PASS
+          grep -q V07_FRESH_RELOAD_PASS /tmp/V07_PASS
+          sha256sum DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend | tee DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend.sha256
+          echo DTC_V07_NATIVE_AUTHORITY_PASS
+      - name: Upload v07 authority
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v07-native-hood-boundary
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend
+            DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend.sha256
+            DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING_report.json
+            DTC_SPRINT_A_v07_FRESH_RELOAD_VALIDATION.json
