@@ -1,0 +1,141 @@
+name: A01 basis and rollback repair strict
+on:
+  push:
+    paths:
+      - '.github/workflows/a01_basis_repair_full_chain_strict.yml'
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    permissions: {actions: read, contents: read}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair backup copier in staged scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          for name in ['rebuild_a01_v01_to_v02_basis_fixed.py','modify_a01_v02_to_dtc_v03_hardpoints.py','modify_a01_v03_to_dtc_v04_cockpit_packaging.py']:
+              p=Path('.github/scripts')/name; s=p.read_text(); a=s.index('def backup'); b=s.find('\ndef ',a+5); b=len(s) if b<0 else b; block=s[a:b]
+              assert 'cp={}' in block, name
+              block=block.replace('cp={}','cp={};world={}',1)
+              lines=block.splitlines(); out=[]; inserted_capture=False; i=0
+              while i<len(lines):
+                  line=lines[i]
+                  if line.lstrip().startswith('q=o.copy()') and not inserted_capture:
+                      ind=line[:len(line)-len(line.lstrip())]; out.append(ind+'world[o]=o.matrix_world.copy();'+line.lstrip()); inserted_capture=True; i+=1; continue
+                  if line.strip().startswith('for o,q in cp.items():') and i+1<len(lines) and 'if o.parent in cp:' in lines[i+1]:
+                      out.append(line); nxt=lines[i+1]; ind=nxt[:len(nxt)-len(nxt.lstrip())]
+                      rhs=nxt.strip().split(':',1)[1]
+                      out.append(ind+'q.parent=cp.get(o.parent)')
+                      out.append(ind+'if o.parent in cp:'+rhs)
+                      out.append(ind+'q.matrix_world=world[o]')
+                      i+=2; continue
+                  out.append(line); i+=1
+              assert inserted_capture,name
+              new='\n'.join(out)+('\n' if block.endswith('\n') else '')
+              s=s[:a]+new+s[b:]; p.write_text(s)
+          PY
+          python -m py_compile .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py .github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py .github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py
+          grep -n -A10 'def backup' .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py
+      - name: Recover exact validated v01 donor
+        shell: bash
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          set -euo pipefail; rm -rf /tmp/base;mkdir -p /tmp/base
+          gh run download 33459151354 --repo "$GITHUB_REPOSITORY" -n dtc-sprint-a-v02-proof -D /tmp/base
+          cp /tmp/base/DTC_BIGANT_A01_DONOR_v01.blend .
+          test "$(sha256sum DTC_BIGANT_A01_DONOR_v01.blend|awk '{print $1}')" = 4cc2d99d1e8e760aad978e8032257682c498cfaced4787248669640a3d981c37
+      - name: Blender 5.2.1
+        shell: bash
+        run: |
+          set -euo pipefail;curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz;tar -xJf /tmp/blender.tar.xz -C /tmp;echo BLENDER=/tmp/blender-5.2.1-linux-x64/blender >> "$GITHUB_ENV"
+      - name: Build and strictly validate v02
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background --python .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py -- --in "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02_basis_fixed_report.json" --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.glb"
+          cat >/tmp/v02check.py <<'PY'
+          import bpy
+          T=3e-5;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b=bpy.data.collections['DTC_SPRINT_A_BASELINE_V01'];s=bpy.data.collections['SOURCE_BIGANT_A01_LOCKED'];mm=lambda c:[o for o in c.objects if o.type=='MESH']
+          assert [len(mm(x)) for x in(s,w,b)]==[92,16,16] and s.get('dtc.locked_source') is True and b.get('dtc.locked_backup') is True;assert bpy.context.scene.get('dtc.authoring_basis')=='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES_NORMALIZED';assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b)})
+          def hits(c,p):return[o for o in mm(c) if o.name.startswith(p)]
+          def bd(a):p=[o.matrix_world@v.co for o in a for v in o.data.vertices];return [min(x[i] for x in p) for i in range(3)],[max(x[i] for x in p) for i in range(3)]
+          ext=lambda q:[q[1][i]-q[0][i] for i in range(3)]
+          top,top0,fw,fw0=bd(hits(w,'TopWing_LOD0_DMG0')),bd(hits(b,'TopWing_LOD0_DMG0')),bd(hits(w,'FrontWing_LOD0_DMG0')),bd(hits(b,'FrontWing_LOD0_DMG0'));te,te0,fe,fe0=map(ext,(top,top0,fw,fw0))
+          assert abs(te0[0]-2.123786)<T and abs(te0[1]-1.643337)<T and abs(te0[2]-1.617585)<T,(te0,)
+          assert abs(fe0[0]-.629775)<T and abs(fe0[1]-.997016)<T and abs(fe0[2]-.698934)<T,(fe0,)
+          assert abs(te[0]-78.2231*.0254)<T and abs(te[1]-62.3471*.0254)<T and abs(te[2]-te0[2])<T,(te,te0)
+          assert abs(fe[0]-21.9439*.0254)<T and abs(fe[1]-40.2439*.0254)<T and abs(fe[2]-fe0[2])<T,(fe,fe0)
+          for pfx in('BumperLeft_DMG0_LOD0','BumperRight_DMG0_LOD0'):
+              a0,a1=bd(hits(b,pfx)),bd(hits(w,pfx));assert abs(a0[0][2]-a1[0][2])<T and abs(a0[1][2]-a1[1][2])<T
+          lf,rf=hits(w,'WheelLF_LOD0')[0],hits(w,'WheelRF_LOD0')[0];lf0,rf0=hits(b,'WheelLF_LOD0')[0],hits(b,'WheelRF_LOD0')[0]
+          assert (lf.matrix_world.translation-lf0.matrix_world.translation).length<T and (rf.matrix_world.translation-rf0.matrix_world.translation).length<T
+          assert lf.matrix_world.translation.y>0 and rf.matrix_world.translation.y<0 and lf.matrix_world.translation.z<0
+          ch=sorted(o.name for o in mm(w) if o.get('dtc.v02_modified') is True);assert len(ch)==5,ch
+          open('/tmp/V02_PASS','w').write('PASS');print('V02_STRICT_PASS',te,fe,ch)
+          PY
+          rm -f /tmp/V02_PASS; "$BLENDER" --background DTC_SPRINT_A_v02.blend --python /tmp/v02check.py; test -f /tmp/V02_PASS
+          sha256sum DTC_SPRINT_A_v02.blend|tee DTC_SPRINT_A_v02.blend.sha256;sha256sum DTC_SPRINT_A_v02.glb|tee DTC_SPRINT_A_v02.glb.sha256
+      - name: Build and strictly validate v03
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background --python .github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py -- --in "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.blend" --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT_report.json" --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.glb"
+          cat >/tmp/v03check.py <<'PY'
+          import bpy
+          I=.0254;T=2e-6;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b2=bpy.data.collections['DTC_SPRINT_A_BASELINE_V02'];mm=lambda c:[o for o in c.objects if o.type=='MESH'];assert len(mm(w))==16 and len(mm(b2))==16 and b2.get('dtc.locked_backup') is True;assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b2)})
+          def one(c,p):a=[o for o in mm(c) if o.name.startswith(p)];assert len(a)==1;return a[0]
+          lf,rf,lr,rr=[one(w,p) for p in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0')];lf0,rf0,lr0,rr0=[one(b2,p) for p in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0')]
+          wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2;ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y;rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y;assert abs(wb-85.4193*I)<T and abs(ft-55.4295*I)<T and abs(rt-52.7976*I)<T
+          fz=(lf0.matrix_world.translation.z+rf0.matrix_world.translation.z)/2;rz=(lr0.matrix_world.translation.z+rr0.matrix_world.translation.z)/2
+          assert abs(lf.matrix_world.translation.z-fz)<T and abs(rf.matrix_world.translation.z-fz)<T and abs(lr.matrix_world.translation.z-rz)<T and abs(rr.matrix_world.translation.z-rz)<T
+          assert abs(lf0.matrix_world.translation.y-.6842621)<3e-5 and abs(rf0.matrix_world.translation.y+.6825165)<3e-5 and abs(lf0.matrix_world.translation.z+.3258233)<3e-5
+          for o in(lf,rf,lr,rr):assert o.get('dtc.v03_pivot_relocated') is True and float(o.get('dtc.v03_pivot_error_m'))<T
+          ch=sorted(o.name for o in mm(w) if o.get('dtc.v03_modified') is True);assert len(ch)==7,ch
+          open('/tmp/V03_PASS','w').write('PASS');print('V03_STRICT_PASS',wb,ft,rt,[list(x.matrix_world.translation) for x in(lf,rf,lr,rr)],ch)
+          PY
+          rm -f /tmp/V03_PASS; "$BLENDER" --background DTC_SPRINT_A_v03_HARDPOINT.blend --python /tmp/v03check.py; test -f /tmp/V03_PASS
+          sha256sum DTC_SPRINT_A_v03_HARDPOINT.blend|tee DTC_SPRINT_A_v03_HARDPOINT.blend.sha256;sha256sum DTC_SPRINT_A_v03_HARDPOINT.glb|tee DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+      - name: Build and strictly validate v04
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background --python .github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py -- --in "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.blend" --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend" --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json" --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb"
+          cat >/tmp/v04check.py <<'PY'
+          import bpy
+          I=.0254;T=2e-6;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b3=bpy.data.collections['DTC_SPRINT_A_BASELINE_V03'];mm=lambda c:[o for o in c.objects if o.type=='MESH'];assert len(mm(w))==16 and len(mm(b3))==16 and b3.get('dtc.locked_backup') is True;assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b3)})
+          def one(c,p):a=[o for o in mm(c) if o.name.startswith(p)];assert len(a)==1;return a[0]
+          lf,rf,lr,rr=[one(w,p) for p in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0')];wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2;ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y;rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y;assert abs(wb-85.4193*I)<T and abs(ft-55.4295*I)<T and abs(rt-52.7976*I)<T
+          zmax=lambda o:max((o.matrix_world@v.co).z for v in o.data.vertices);d,d0=one(w,'Driver_LOD0'),one(b3,'Driver_LOD0');assert abs(zmax(d0)-.72916874)<3e-5,(zmax(d0),);assert abs((zmax(d0)-zmax(d))-.18)<T,(zmax(d0),zmax(d));assert abs(zmax(d)-.54916874)<3e-5
+          ch=sorted(o.name for o in mm(w) if o.get('dtc.v04_modified') is True);assert len(ch)==3,ch
+          open('/tmp/V04_PASS','w').write('PASS');print('V04_STRICT_PASS',zmax(d0),zmax(d),wb,ft,rt,ch)
+          PY
+          rm -f /tmp/V04_PASS; "$BLENDER" --background DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend --python /tmp/v04check.py; test -f /tmp/V04_PASS
+          sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend|tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256;sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb|tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-basis-rollback-strict-proof
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            DTC_SPRINT_A_v02.blend
+            DTC_SPRINT_A_v02.blend.sha256
+            DTC_SPRINT_A_v02.glb
+            DTC_SPRINT_A_v02.glb.sha256
+            DTC_SPRINT_A_v02_basis_fixed_report.json
+            DTC_SPRINT_A_v03_HARDPOINT.blend
+            DTC_SPRINT_A_v03_HARDPOINT.blend.sha256
+            DTC_SPRINT_A_v03_HARDPOINT.glb
+            DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+            DTC_SPRINT_A_v03_HARDPOINT_report.json
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json
+            .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py
+            .github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py
+            .github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py
