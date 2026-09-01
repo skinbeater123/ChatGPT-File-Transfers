@@ -119,6 +119,20 @@ jobs:
           cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
           cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
 
+      - name: Apply Blender 5.2 proof-render compatibility patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/scripts/modify_a01_to_dtc_v02_blender.py')
+          s=p.read_text()
+          old='    scene.display.shading.single_color = (0.36, 0.37, 0.40)\n    scene.world.color = (0.055, 0.055, 0.055)\n'
+          new='    scene.display.shading.single_color = (0.36, 0.37, 0.40)\n    if scene.world is None:\n        scene.world = bpy.data.worlds.new("DTC_PROOF_WORLD")\n    scene.world.color = (0.055, 0.055, 0.055)\n'
+          assert old in s
+          p.write_text(s.replace(old,new))
+          PY
+
       - name: Create reversible DTC v02 modification pass
         shell: bash
         run: |
