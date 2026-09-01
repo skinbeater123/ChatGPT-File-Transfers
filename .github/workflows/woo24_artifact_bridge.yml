@@ -14,8 +14,19 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Recover pinned phys.zip
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git show d2cbf94fe71b69835578fd59a3d6791916620b8f:phys.zip > phys-pinned.zip
+          sha256sum phys-pinned.zip > phys-pinned.sha256
+          unzip -l phys-pinned.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: woo24-supplied-archive
-          path: WOO24.zip
+          name: woo24-phys-pinned
+          path: |
+            phys-pinned.zip
+            phys-pinned.sha256
           retention-days: 1
