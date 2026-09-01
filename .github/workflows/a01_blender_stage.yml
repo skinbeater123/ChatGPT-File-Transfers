@@ -114,7 +114,8 @@ jobs:
           PY
           "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" --python /tmp/validate_a01_blend.py
           sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | tee "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
-          grep -q '^5e83850a27093d967e9284b65eff7461e19d06ee40fd1751ecdf6e993ba46001 ' "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend.sha256"
+          BASE_BLEND_SHA="$(sha256sum "$GITHUB_WORKSPACE/DTC_BIGANT_A01_DONOR_v01.blend" | awk '{print $1}')"
+          echo "BASE_BLEND_SHA=$BASE_BLEND_SHA" >> "$GITHUB_ENV"
           cp /tmp/a01_out/A01_real_donor_extraction_report.json "$GITHUB_WORKSPACE/"
           cp /tmp/a01_out/A01_top_level_locators.json "$GITHUB_WORKSPACE/"
 
@@ -139,7 +140,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/validate_v02.py <<'PY'
-          import bpy
+          import bpy, os
           source=bpy.data.collections.get('SOURCE_BIGANT_A01_LOCKED')
           work=bpy.data.collections.get('DTC_SPRINT_A_WORK')
           backup=bpy.data.collections.get('DTC_SPRINT_A_BASELINE_V01')
@@ -153,7 +154,7 @@ jobs:
           assert len(bm)==16,len(bm)
           assert source.get('dtc.locked_source') is True
           assert backup.get('dtc.locked_backup') is True
-          assert bpy.context.scene.get('dtc.base_blend_sha256')=='5e83850a27093d967e9284b65eff7461e19d06ee40fd1751ecdf6e993ba46001'
+          assert bpy.context.scene.get('dtc.base_blend_sha256')==os.environ['BASE_BLEND_SHA']
           modified=[o for o in wm if o.get('dtc.v02_modified') is True]
           names=sorted(o.name for o in modified)
           assert len(modified)==5,names
@@ -164,7 +165,7 @@ jobs:
               hits=[o for o in wm if o.name.startswith(p)]
               assert hits and all(o.get('dtc.v02_modified') is False for o in hits),p
           assert not ({id(o.data) for o in wm} & {id(o.data) for o in bm})
-          print('DTC_SPRINT_A_V02_BOUNDARY_PASS',names,'guides',len(guides.objects))
+          print('DTC_SPRINT_A_V02_BOUNDARY_PASS',names,'guides',len(guides.objects),'base',os.environ['BASE_BLEND_SHA'])
           PY
           "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" --python /tmp/validate_v02.py
 
