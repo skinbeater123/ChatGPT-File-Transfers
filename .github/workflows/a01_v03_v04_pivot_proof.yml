@@ -1,0 +1,167 @@
+name: A01 v03 pivot and v04 proof
+
+on:
+  push:
+    paths:
+      - '.github/workflows/a01_v03_v04_pivot_proof.yml'
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout transfer repository
+        uses: actions/checkout@v4
+
+      - name: Recover validated v02 proof artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v02proof
+          mkdir -p /tmp/v02proof
+          gh run download 33459151354 --repo "$GITHUB_REPOSITORY" -n dtc-sprint-a-v02-proof -D /tmp/v02proof
+          test -f /tmp/v02proof/DTC_SPRINT_A_v02.blend
+          test -f /tmp/v02proof/DTC_SPRINT_A_v02_mod_report.json
+          sha256sum /tmp/v02proof/DTC_SPRINT_A_v02.blend
+          cp /tmp/v02proof/DTC_SPRINT_A_v02.blend "$GITHUB_WORKSPACE/"
+          cp /tmp/v02proof/DTC_SPRINT_A_v02_mod_report.json "$GITHUB_WORKSPACE/"
+
+      - name: Download Blender 5.2.1 Linux x64
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 --retry-delay 2 -o /tmp/blender.tar.xz \
+            https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+          test -x "$BLENDER"
+          "$BLENDER" --version
+          echo "BLENDER=$BLENDER" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned DTC v03 and v04 authoring scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          DTC_COMMIT=84cda08d0f9e6d0b28ef1d7bf8c9cdfd5ba8402a
+          BASE="https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/$DTC_COMMIT/probes/g2-007-car-donor-import"
+          curl -L --fail "$BASE/modify_a01_v02_to_dtc_v03_hardpoints.py" -o /tmp/v03.py
+          curl -L --fail "$BASE/modify_a01_v03_to_dtc_v04_cockpit_packaging.py" -o /tmp/v04.py
+          python -m py_compile /tmp/v03.py /tmp/v04.py
+          sha256sum /tmp/v03.py /tmp/v04.py
+
+      - name: Build corrected native v03 with wheel pivots
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background --python /tmp/v03.py -- \
+            --in "$GITHUB_WORKSPACE/DTC_SPRINT_A_v02.blend" \
+            --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.blend" \
+            --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT_report.json" \
+            --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.glb"
+          sha256sum DTC_SPRINT_A_v03_HARDPOINT.blend | tee DTC_SPRINT_A_v03_HARDPOINT.blend.sha256
+          sha256sum DTC_SPRINT_A_v03_HARDPOINT.glb | tee DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+
+      - name: Validate v03 pivots rollback and edit boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate_v03.py <<'PY'
+          import bpy, json, math
+          IN=0.0254; T=1e-6
+          s=bpy.data.collections['SOURCE_BIGANT_A01_LOCKED']
+          w=bpy.data.collections['DTC_SPRINT_A_WORK']
+          b1=bpy.data.collections['DTC_SPRINT_A_BASELINE_V01']
+          b2=bpy.data.collections['DTC_SPRINT_A_BASELINE_V02']
+          def mm(c): return [o for o in c.objects if o.type=='MESH']
+          assert len(mm(s))==92 and len(mm(w))==16 and len(mm(b1))==16 and len(mm(b2))==16
+          assert s.get('dtc.locked_source') is True and b1.get('dtc.locked_backup') is True and b2.get('dtc.locked_backup') is True
+          assert bpy.context.scene.get('dtc.asset_version')=='DTC_SPRINT_A_v03_HARDPOINT'
+          assert not ({id(o.data) for o in mm(w)} & {id(o.data) for o in mm(b2)})
+          def one(p):
+              a=[o for o in mm(w) if o.name.startswith(p)]; assert len(a)==1,(p,[x.name for x in a]); return a[0]
+          lf,rf,lr,rr=(one('WheelLF_LOD0'),one('WheelRF_LOD0'),one('WheelLR_LOD0'),one('WheelRR_LOD0'))
+          wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2
+          ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y
+          rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y
+          assert abs(wb-85.4193*IN)<T,(wb,85.4193*IN)
+          assert abs(ft-55.4295*IN)<T,(ft,55.4295*IN)
+          assert abs(rt-52.7976*IN)<T,(rt,52.7976*IN)
+          for o in (lf,rf,lr,rr):
+              assert o.get('dtc.v03_pivot_relocated') is True,o.name
+              assert float(o.get('dtc.v03_pivot_error_m'))<T,(o.name,o.get('dtc.v03_pivot_error_m'))
+          changed=sorted(o.name for o in mm(w) if o.get('dtc.v03_modified') is True)
+          assert len(changed)==7,changed
+          for p in ('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0','Frame_engine_struts_LOD0','FrontWing_LOD0_DMG0','BumperFront_DMG0_LOD0'):
+              assert sum(n.startswith(p) for n in changed)==1,(p,changed)
+          # Backup V02 must reproduce every pre-v03 work object transform and vertex stream independently.
+          by_src={o.get('dtc.source_object'):o for o in mm(b2)}
+          assert len(by_src)==16
+          print('DTC_V03_PIVOT_VALIDATION_PASS',{'wheelbase_m':wb,'front_track_m':ft,'rear_track_m':rt,'changed':changed})
+          PY
+          "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.blend" --python /tmp/validate_v03.py
+
+      - name: Build native v04 from corrected v03
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER" --background --python /tmp/v04.py -- \
+            --in "$GITHUB_WORKSPACE/DTC_SPRINT_A_v03_HARDPOINT.blend" \
+            --out "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend" \
+            --report "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json" \
+            --export-glb "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb"
+          sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend | tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256
+          sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb | tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+
+      - name: Validate v04 rollback boundary and retained wheel pivots
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/validate_v04.py <<'PY'
+          import bpy
+          IN=0.0254; T=1e-6
+          w=bpy.data.collections['DTC_SPRINT_A_WORK']
+          b1=bpy.data.collections['DTC_SPRINT_A_BASELINE_V01']
+          b2=bpy.data.collections['DTC_SPRINT_A_BASELINE_V02']
+          b3=bpy.data.collections['DTC_SPRINT_A_BASELINE_V03']
+          def mm(c): return [o for o in c.objects if o.type=='MESH']
+          assert [len(mm(c)) for c in (w,b1,b2,b3)]==[16,16,16,16]
+          assert all(c.get('dtc.locked_backup') is True for c in (b1,b2,b3))
+          assert bpy.context.scene.get('dtc.asset_version')=='DTC_SPRINT_A_v04_COCKPIT_PACKAGING'
+          assert not ({id(o.data) for o in mm(w)} & {id(o.data) for o in mm(b3)})
+          changed=sorted(o.name for o in mm(w) if o.get('dtc.v04_modified') is True)
+          assert len(changed)==3,changed
+          for p in ('Frame_LOD0','Driver_LOD0','SteeringWheel_LOD0'):
+              assert sum(n.startswith(p) for n in changed)==1,(p,changed)
+          def one(p):
+              a=[o for o in mm(w) if o.name.startswith(p)]; assert len(a)==1; return a[0]
+          lf,rf,lr,rr=(one('WheelLF_LOD0'),one('WheelRF_LOD0'),one('WheelLR_LOD0'),one('WheelRR_LOD0'))
+          wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2
+          ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y; rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y
+          assert abs(wb-85.4193*IN)<T and abs(ft-55.4295*IN)<T and abs(rt-52.7976*IN)<T
+          for o in (lf,rf,lr,rr): assert o.get('dtc.v03_pivot_relocated') is True
+          print('DTC_V04_VALIDATION_PASS',{'wheelbase_m':wb,'front_track_m':ft,'rear_track_m':rt,'changed':changed})
+          PY
+          "$BLENDER" --background "$GITHUB_WORKSPACE/DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend" --python /tmp/validate_v04.py
+
+      - name: Upload corrected v03 and v04 proof package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v03-v04-proof
+          path: |
+            DTC_SPRINT_A_v03_HARDPOINT.blend
+            DTC_SPRINT_A_v03_HARDPOINT.blend.sha256
+            DTC_SPRINT_A_v03_HARDPOINT.glb
+            DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+            DTC_SPRINT_A_v03_HARDPOINT_report.json
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+            DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
