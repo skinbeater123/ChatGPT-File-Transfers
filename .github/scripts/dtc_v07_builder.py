@@ -75,7 +75,7 @@ def main():
  if sc.get('dtc.asset_version')!=INPUT:raise RuntimeError(('version',sc.get('dtc.asset_version')))
  if sc.get('dtc.authoring_basis')!=BASIS or w.get('dtc.authoring_basis')!=BASIS:raise RuntimeError('bad basis')
  if sc.get('dtc.source_pssg_sha256')!=SRC_SHA:raise RuntimeError('bad donor')
- if [len(meshes(x)) for x in (s,w,*prior)]!=[92,16,16,16,16,16,16,16]:raise RuntimeError('census')
+ if [len(meshes(x)) for x in (s,w,*prior)]!=[92,16,16,16,16,16,16]:raise RuntimeError('census')
  for p,t in WHEELS.items():
   if (one(w,p).matrix_world.translation-Vector(t)).length>2e-6:raise RuntimeError(('pivot',p))
  before={o.name:fp(o) for o in meshes(w)};b6=backup(w);frame=one(w,'Frame_LOD0');sel=select_faces(frame)
