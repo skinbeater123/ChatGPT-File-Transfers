@@ -1,0 +1,38 @@
+name: DTC v10 fuel tank split preview
+on:
+  push:
+    paths:
+      - '.github/workflows/preview_dtc_v10_tank_split.yml'
+  workflow_dispatch:
+permissions:
+  actions: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact v09 authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p base
+          gh run download 33519947815 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v09-editable-hood-split -D base
+          echo 'b746681f99acce179ffdf60faadf2ee5337d0b5936745f91a0e265e5071765fa  base/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend' | sha256sum -c -
+      - name: Install Blender 5.2.1 runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libegl1 libgl1
+          curl -L --fail --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz -o blender.tar.xz
+          tar -xf blender.tar.xz
+      - name: Render tank split candidates
+        run: |
+          ./blender-5.2.1-linux-x64/blender --background --python-exit-code 1 --python .github/scripts/preview_dtc_v10_tank_split.py -- --blend base/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend --out preview
+          test -f preview/tight_side.png
+          test -f preview/balanced_side.png
+          test -f preview/broad_side.png
+          test -f preview/tank_candidates.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dtc-v10-tank-split-preview
+          path: preview/
+          retention-days: 1
