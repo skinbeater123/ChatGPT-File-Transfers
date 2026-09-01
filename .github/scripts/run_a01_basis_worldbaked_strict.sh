@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python - <<'PY'
+from pathlib import Path
+def replace(path,new):
+    p=Path(path);s=p.read_text();a=s.index('def backup');b=s.find('\ndef ',a+5);b=len(s) if b<0 else b;p.write_text(s[:a]+new+s[b:])
+replace('.github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py', '''def backup(work):
+    if bpy.data.collections.get(BASE): raise RuntimeError(f'{BASE} exists')
+    b=bpy.data.collections.new(BASE); bpy.context.scene.collection.children.link(b)
+    for o in meshes(work):
+        M=o.matrix_world.copy(); q=o.copy(); q.parent=None; q.data=o.data.copy(); q.data.transform(M); q.matrix_world=M.inverted()@M
+        q.hide_select=True; q['dtc.rollback_role']='NORMALIZED_V01_PRE_V02_WORLD_BAKED_BACKUP'; q['dtc.source_object']=o.name
+        q['dtc.original_matrix_world']=[float(M[r][c]) for r in range(4) for c in range(4)]; q['dtc.original_origin_m']=tuple(float(x) for x in M.translation)
+        b.objects.link(q)
+    b.hide_viewport=True; b.hide_render=True; b['dtc.locked_backup']=True; b['dtc.rollback_representation']='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA'; b['dtc.rollback_target']='normalized Big Ant A01 before v02 visual edits'; b['dtc.authoring_basis']='DTC_X_FORWARD_Y_LEFT_Z_UP_METRES_NORMALIZED'
+    return b
+''')
+replace('.github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py', '''def backup(work):
+    if bpy.data.collections.get(BASE2): raise RuntimeError(f'{BASE2} exists')
+    b=bpy.data.collections.new(BASE2); bpy.context.scene.collection.children.link(b)
+    for o in meshes(work):
+        M=o.matrix_world.copy(); q=o.copy(); q.parent=None; q.data=o.data.copy(); q.data.transform(M); q.matrix_world=M.inverted()@M
+        q.hide_select=True; q['dtc.rollback_role']='V02_PRE_V03_WORLD_BAKED_BACKUP'; q['dtc.source_object']=o.name
+        q['dtc.original_matrix_world']=[float(M[r][c]) for r in range(4) for c in range(4)]; q['dtc.original_origin_m']=tuple(float(x) for x in M.translation)
+        b.objects.link(q)
+    b.hide_viewport=True; b.hide_render=True; b['dtc.locked_backup']=True; b['dtc.rollback_representation']='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA'; b['dtc.rollback_target']='DTC_SPRINT_A_WORK immediately before v03'
+    return b
+''')
+replace('.github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py', '''def backup(w):
+    if bpy.data.collections.get(B3): raise RuntimeError(f'{B3} exists')
+    b=bpy.data.collections.new(B3); bpy.context.scene.collection.children.link(b)
+    for o in meshes(w):
+        M=o.matrix_world.copy(); q=o.copy(); q.parent=None; q.data=o.data.copy(); q.data.transform(M); q.matrix_world=M.inverted()@M
+        q.hide_select=True; q['dtc.rollback_role']='V03_PRE_V04_WORLD_BAKED_BACKUP'; q['dtc.source_object']=o.name
+        q['dtc.original_matrix_world']=[float(M[r][c]) for r in range(4) for c in range(4)]; q['dtc.original_origin_m']=tuple(float(x) for x in M.translation)
+        b.objects.link(q)
+    b.hide_viewport=True; b.hide_render=True; b['dtc.locked_backup']=True; b['dtc.rollback_representation']='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA'; b['dtc.rollback_target']='DTC_SPRINT_A_WORK immediately before v04'
+    return b
+''')
+PY
+python -m py_compile .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py .github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py .github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py
+
+rm -rf /tmp/base; mkdir -p /tmp/base
+gh run download 33459151354 --repo "$GITHUB_REPOSITORY" -n dtc-sprint-a-v02-proof -D /tmp/base
+cp /tmp/base/DTC_BIGANT_A01_DONOR_v01.blend .
+test "$(sha256sum DTC_BIGANT_A01_DONOR_v01.blend|awk '{print $1}')" = 4cc2d99d1e8e760aad978e8032257682c498cfaced4787248669640a3d981c37
+
+curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+tar -xJf /tmp/blender.tar.xz -C /tmp
+BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+"$BLENDER" --version
+
+"$BLENDER" --background --python .github/scripts/rebuild_a01_v01_to_v02_basis_fixed.py -- --in DTC_BIGANT_A01_DONOR_v01.blend --out DTC_SPRINT_A_v02.blend --report DTC_SPRINT_A_v02_basis_fixed_report.json --export-glb DTC_SPRINT_A_v02.glb
+cat >/tmp/v02check.py <<'PY'
+import bpy
+T=3e-5;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b=bpy.data.collections['DTC_SPRINT_A_BASELINE_V01'];s=bpy.data.collections['SOURCE_BIGANT_A01_LOCKED'];mm=lambda c:[o for o in c.objects if o.type=='MESH']
+assert [len(mm(x)) for x in(s,w,b)]==[92,16,16] and b.get('dtc.rollback_representation')=='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA';assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b)})
+def hits(c,p):return[o for o in mm(c) if o.name.startswith(p)]
+def bd(a):p=[o.matrix_world@v.co for o in a for v in o.data.vertices];return [min(x[i] for x in p) for i in range(3)],[max(x[i] for x in p) for i in range(3)]
+ext=lambda q:[q[1][i]-q[0][i] for i in range(3)];te,te0,fe,fe0=map(ext,(bd(hits(w,'TopWing_LOD0_DMG0')),bd(hits(b,'TopWing_LOD0_DMG0')),bd(hits(w,'FrontWing_LOD0_DMG0')),bd(hits(b,'FrontWing_LOD0_DMG0')))
+assert max(abs(a-c) for a,c in zip(te0,[2.123786,1.643337,1.617585]))<T,(te0,);assert max(abs(a-c) for a,c in zip(fe0,[.629775,.997016,.698934]))<T,(fe0,)
+assert abs(te[0]-78.2231*.0254)<T and abs(te[1]-62.3471*.0254)<T and abs(te[2]-te0[2])<T,(te,te0);assert abs(fe[0]-21.9439*.0254)<T and abs(fe[1]-40.2439*.0254)<T and abs(fe[2]-fe0[2])<T,(fe,fe0)
+for pfx in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0'):
+ o=hits(w,pfx)[0];q=hits(b,pfx)[0];v=q.get('dtc.original_origin_m');assert v is not None and max(abs(float(v[i])-o.matrix_world.translation[i]) for i in range(3))<T,(pfx,v,list(o.matrix_world.translation))
+ch=sorted(o.name for o in mm(w) if o.get('dtc.v02_modified') is True);assert len(ch)==5,ch
+open('/tmp/V02_PASS','w').write('PASS');print('V02_STRICT_PASS',te,fe,ch)
+PY
+rm -f /tmp/V02_PASS
+"$BLENDER" --background DTC_SPRINT_A_v02.blend --python /tmp/v02check.py
+test -f /tmp/V02_PASS
+sha256sum DTC_SPRINT_A_v02.blend|tee DTC_SPRINT_A_v02.blend.sha256
+sha256sum DTC_SPRINT_A_v02.glb|tee DTC_SPRINT_A_v02.glb.sha256
+
+"$BLENDER" --background --python .github/scripts/modify_a01_v02_to_dtc_v03_hardpoints.py -- --in DTC_SPRINT_A_v02.blend --out DTC_SPRINT_A_v03_HARDPOINT.blend --report DTC_SPRINT_A_v03_HARDPOINT_report.json --export-glb DTC_SPRINT_A_v03_HARDPOINT.glb
+cat >/tmp/v03check.py <<'PY'
+import bpy
+I=.0254;T=2e-6;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b=bpy.data.collections['DTC_SPRINT_A_BASELINE_V02'];mm=lambda c:[o for o in c.objects if o.type=='MESH'];assert len(mm(w))==len(mm(b))==16 and b.get('dtc.rollback_representation')=='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA';assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b)})
+def one(c,p):a=[o for o in mm(c) if o.name.startswith(p)];assert len(a)==1;return a[0]
+lf,rf,lr,rr=[one(w,p) for p in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0')];wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2;ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y;rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y
+assert abs(wb-85.4193*I)<T and abs(ft-55.4295*I)<T and abs(rt-52.7976*I)<T,(wb,ft,rt)
+z=[lf.matrix_world.translation.z,rf.matrix_world.translation.z,lr.matrix_world.translation.z,rr.matrix_world.translation.z];assert abs(z[0]+.32582325)<3e-5 and abs(z[1]+.32582325)<3e-5 and abs(z[2]+.30611894)<3e-5 and abs(z[3]+.30611894)<3e-5,z
+for pfx,expect in [('WheelLF_LOD0',(1.3102347,.6842621,-.3258233)),('WheelRF_LOD0',(1.3102542,-.6825165,-.3258232)),('WheelLR_LOD0',(-.9337295,.7026142,-.3061190)),('WheelRR_LOD0',(-.9337295,-.7345903,-.3061189))]:
+ v=one(b,pfx).get('dtc.original_origin_m');assert max(abs(float(v[i])-expect[i]) for i in range(3))<3e-5,(pfx,v)
+for o in(lf,rf,lr,rr):assert o.get('dtc.v03_pivot_relocated') is True and float(o.get('dtc.v03_pivot_error_m'))<T
+ch=sorted(o.name for o in mm(w) if o.get('dtc.v03_modified') is True);assert len(ch)==7,ch
+open('/tmp/V03_PASS','w').write('PASS');print('V03_STRICT_PASS',wb,ft,rt,z,ch)
+PY
+rm -f /tmp/V03_PASS
+"$BLENDER" --background DTC_SPRINT_A_v03_HARDPOINT.blend --python /tmp/v03check.py
+test -f /tmp/V03_PASS
+sha256sum DTC_SPRINT_A_v03_HARDPOINT.blend|tee DTC_SPRINT_A_v03_HARDPOINT.blend.sha256
+sha256sum DTC_SPRINT_A_v03_HARDPOINT.glb|tee DTC_SPRINT_A_v03_HARDPOINT.glb.sha256
+
+"$BLENDER" --background --python .github/scripts/modify_a01_v03_to_dtc_v04_cockpit_packaging.py -- --in DTC_SPRINT_A_v03_HARDPOINT.blend --out DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend --report DTC_SPRINT_A_v04_COCKPIT_PACKAGING_report.json --export-glb DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb
+cat >/tmp/v04check.py <<'PY'
+import bpy
+I=.0254;T=2e-6;w=bpy.data.collections['DTC_SPRINT_A_WORK'];b=bpy.data.collections['DTC_SPRINT_A_BASELINE_V03'];mm=lambda c:[o for o in c.objects if o.type=='MESH'];assert len(mm(w))==len(mm(b))==16 and b.get('dtc.rollback_representation')=='WORLD_BAKED_GEOMETRY_PLUS_ORIGINAL_MATRIX_METADATA';assert not({id(o.data) for o in mm(w)}&{id(o.data) for o in mm(b)})
+def one(c,p):a=[o for o in mm(c) if o.name.startswith(p)];assert len(a)==1;return a[0]
+lf,rf,lr,rr=[one(w,p) for p in('WheelLF_LOD0','WheelRF_LOD0','WheelLR_LOD0','WheelRR_LOD0')];wb=(lf.matrix_world.translation.x+rf.matrix_world.translation.x-lr.matrix_world.translation.x-rr.matrix_world.translation.x)/2;ft=lf.matrix_world.translation.y-rf.matrix_world.translation.y;rt=lr.matrix_world.translation.y-rr.matrix_world.translation.y;assert abs(wb-85.4193*I)<T and abs(ft-55.4295*I)<T and abs(rt-52.7976*I)<T
+zmax=lambda o:max((o.matrix_world@v.co).z for v in o.data.vertices);d=one(w,'Driver_LOD0');d0=one(b,'Driver_LOD0');assert abs(zmax(d0)-.72916874)<3e-5,(zmax(d0),);assert abs(zmax(d)-.54916874)<3e-5,(zmax(d),);assert abs(zmax(d0)-zmax(d)-.18)<T
+ch=sorted(o.name for o in mm(w) if o.get('dtc.v04_modified') is True);assert len(ch)==3,ch
+open('/tmp/V04_PASS','w').write('PASS');print('V04_STRICT_PASS',zmax(d0),zmax(d),wb,ft,rt,ch)
+PY
+rm -f /tmp/V04_PASS
+"$BLENDER" --background DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend --python /tmp/v04check.py
+test -f /tmp/V04_PASS
+sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend|tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.blend.sha256
+sha256sum DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb|tee DTC_SPRINT_A_v04_COCKPIT_PACKAGING.glb.sha256
+
+echo A01_WORLD_BAKED_STRICT_CHAIN_PASS
