@@ -1,0 +1,52 @@
+name: DTC v06 native authority
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dtc_v06_native_authority.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate v06
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p base scripts
+          gh run download 33490949704 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v05-native-authority -D base
+          test "$(sha256sum base/DTC_SPRINT_A_v05_BEULAH_SHELL.blend | awk '{print $1}')" = "92fe052b3f463695763fd6fe6956372503cf0d3e0d5055e84d1d02cca8cfc745"
+          cp .github/scripts/dtc_v06_builder.py scripts/build_v06.py
+          cp .github/scripts/dtc_v06_validator.py scripts/validate_v06.py
+          python -m py_compile scripts/build_v06.py scripts/validate_v06.py
+          curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+          "$BLENDER" --version
+          "$BLENDER" --background --python scripts/build_v06.py -- --in base/DTC_SPRINT_A_v05_BEULAH_SHELL.blend --out DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend --report DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL_report.json --export-glb DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.glb
+          rm -f /tmp/V06_PASS
+          "$BLENDER" --background DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend --python scripts/validate_v06.py -- --pass-file /tmp/V06_PASS --json DTC_SPRINT_A_v06_FRESH_RELOAD_VALIDATION.json
+          test -f /tmp/V06_PASS
+          grep -q V06_FRESH_RELOAD_PASS /tmp/V06_PASS
+          sha256sum DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend | tee DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend.sha256
+          sha256sum DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.glb | tee DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.glb.sha256
+          echo DTC_V06_NATIVE_AUTHORITY_PASS
+      - name: Upload v06 authority
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v06-native-authority
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend
+            DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.blend.sha256
+            DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.glb
+            DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL.glb.sha256
+            DTC_SPRINT_A_v06_BEULAH_FRONT_SHELL_report.json
+            DTC_SPRINT_A_v06_FRESH_RELOAD_VALIDATION.json
