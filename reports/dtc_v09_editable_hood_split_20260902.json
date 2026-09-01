@@ -1,0 +1,38 @@
+{
+  "schema": "dtc_sprint_a_v09_editable_hood_split_v1",
+  "status": "V09_NATIVE_BUILD_PASS",
+  "asset_version": "DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT",
+  "parent_sha256": "ad9080c7bc7b9475547edda3ad1eb2ca9fabed6cbd2341b2ac339683b32a6456",
+  "policy": {
+    "operation": "practical modelling split",
+    "forensic_boundary_claim": false,
+    "boundary_source": "v08 438-face visual envelope",
+    "rollback_preserved": true
+  },
+  "source": {
+    "frame_object": "DTC_Body_LOD0",
+    "vertices": 6060,
+    "faces": 2966,
+    "work_meshes": 16
+  },
+  "result": {
+    "rollback_collection": "DTC_SPRINT_A_BASELINE_V08_PRACTICAL",
+    "rollback_meshes": 16,
+    "body_object": "DTC_Body_LOD0",
+    "hood_object": "DTC_Hood",
+    "body_faces": 2528,
+    "hood_faces": 438,
+    "face_total": 2966,
+    "face_geometry_conserved_exactly": true,
+    "body_hood_overlap_faces": 0,
+    "production_cut": true,
+    "output_sha256": "b746681f99acce179ffdf60faadf2ee5337d0b5936745f91a0e265e5071765fa"
+  },
+  "next_modelling_focus": [
+    "visually inspect/clean hood-body seam",
+    "cockpit position/proportions",
+    "fuel tank",
+    "cage/side panels",
+    "wing geometry/mounting"
+  ]
+}
