@@ -1,0 +1,58 @@
+name: DTC v08 native hood component stage
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dtc_v08_native_authority.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate v08
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p base scripts
+          gh run download 33499675027 --repo skinbeater123/ChatGPT-File-Transfers -n dtc-sprint-a-v07-native-hood-boundary -D base
+          test "$(sha256sum base/DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend | awk '{print $1}')" = "257aa44a3d3001e9174a6728ff56e7e76253f9c8e4c2ba32e17a58bd84341887"
+          curl -L --fail -o scripts/build_v08.py 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/build_dtc_sprint_a_v08_hood_component_stage.py'
+          curl -L --fail -o scripts/validate_v08.py 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/validate_dtc_sprint_a_v08_native.py'
+          curl -L --fail -o scripts/core.json 'https://raw.githubusercontent.com/skinbeater123/Dirt-Track-Cowboys/design/g2-007-car-asset-architecture-20260901/probes/g2-007-car-donor-import/dtc_sprint_a_v08_hood_reference_core.json'
+          python -m py_compile scripts/build_v08.py scripts/validate_v08.py
+          python - <<'PY'
+          import json
+          d=json.load(open('scripts/core.json'))
+          assert d['core_faces']==171 and len(d['frame_polygon_indices'])==171
+          assert len(set(d['frame_polygon_indices']))==171
+          assert d['production_cut_authority'] is False
+          print('V08_CORE_CONTRACT_PASS')
+          PY
+          curl -L --fail --retry 3 -o /tmp/blender.tar.xz https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz
+          tar -xJf /tmp/blender.tar.xz -C /tmp
+          BLENDER=/tmp/blender-5.2.1-linux-x64/blender
+          "$BLENDER" --version
+          "$BLENDER" --background --python scripts/build_v08.py -- --in base/DTC_SPRINT_A_v07_HOOD_BOUNDARY_BINDING.blend --out DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend --core-json scripts/core.json --report DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE_report.json
+          rm -f /tmp/V08_PASS
+          "$BLENDER" --background DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend --python scripts/validate_v08.py -- --pass-file /tmp/V08_PASS --json DTC_SPRINT_A_v08_FRESH_RELOAD_VALIDATION.json
+          test -f /tmp/V08_PASS
+          grep -q V08_FRESH_RELOAD_PASS /tmp/V08_PASS
+          sha256sum DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend | tee DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend.sha256
+          echo DTC_V08_NATIVE_AUTHORITY_PASS
+      - name: Upload v08 authority
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v08-native-hood-component-stage
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend
+            DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend.sha256
+            DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE_report.json
+            DTC_SPRINT_A_v08_FRESH_RELOAD_VALIDATION.json
