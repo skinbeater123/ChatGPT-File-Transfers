@@ -1,0 +1,91 @@
+name: WoO24 IL2CPP surface forensic probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_surface_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout transfer payload
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Extract supplied WoO24 package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_dump woo24_probe
+          unzip -q WOO24.zip -d woo24_input
+          find woo24_input -maxdepth 5 -type f -printf '%s %p\n' | sort -n
+
+      - name: Build Il2CppDumper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          j['RequireAnyKey']=False
+          j['DumpMethod']=True
+          j['DumpField']=True
+          j['DumpProperty']=True
+          j['DumpAttribute']=True
+          j['DumpFieldOffset']=True
+          j['DumpMethodOffset']=True
+          j['DumpTypeDefIndex']=True
+          j['GenerateDummyDll']=True
+          p.write_text(json.dumps(j, indent=2), encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0
+
+      - name: Dump IL2CPP metadata and method map
+        shell: bash
+        run: |
+          set -euxo pipefail
+          GAME=$(find woo24_input -type f -iname 'GameAssembly.dll' | head -1)
+          META=$(find woo24_input -type f -iname 'global-metadata.dat' | head -1)
+          DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -type f -name 'Il2CppDumper.dll' | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
+          set +e
+          dotnet "$DUMPER" "$GAME" "$META" "$PWD/woo24_dump" 2>&1 | tee woo24_probe/il2cppdumper.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "Il2CppDumper exit status: $STATUS"
+          find woo24_dump -maxdepth 2 -type f -printf '%s %p\n' | sort -n | tail -80
+
+      - name: Analyze Assembly-CSharp surface architecture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m pip install --disable-pip-version-check --quiet dnfile pefile capstone
+          python3 .github/scripts/woo24_surface_probe.py \
+            --root "$PWD/woo24_input" \
+            --dump "$PWD/woo24_dump" \
+            --out "$PWD/woo24_probe" \
+            | tee woo24_probe/console_summary.txt
+
+      - name: Upload derived forensic text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-il2cpp-surface-probe
+          path: |
+            woo24_probe/summary.txt
+            woo24_probe/surface_candidates.json
+            woo24_probe/il2cppdumper.log
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 6
