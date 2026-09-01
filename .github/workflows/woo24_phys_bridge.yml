@@ -30,3 +30,4 @@ jobs:
             phys-pinned.zip
             phys-pinned.sha256
           retention-days: 1
+# trigger pinned-phys bridge
