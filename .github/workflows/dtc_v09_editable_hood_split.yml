@@ -1,0 +1,99 @@
+name: DTC v09 practical editable hood split
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dtc_v09_editable_hood_split.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact v08 authority artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p base
+          gh run download 33507580090 --repo skinbeater123/ChatGPT-File-Transfers \
+            -n dtc-sprint-a-v08-native-hood-component-stage -D base
+          find base -maxdepth 2 -type f -print
+          echo 'ad9080c7bc7b9475547edda3ad1eb2ca9fabed6cbd2341b2ac339683b32a6456  base/DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend' | sha256sum -c -
+
+      - name: Compile builder
+        run: python -m py_compile .github/scripts/dtc_v09_editable_hood_split.py
+
+      - name: Install Blender 5.2.1
+        run: |
+          curl -L --fail --retry 3 \
+            https://download.blender.org/release/Blender5.2/blender-5.2.1-linux-x64.tar.xz \
+            -o blender.tar.xz
+          tar -xf blender.tar.xz
+          ./blender-5.2.1-linux-x64/blender --version
+
+      - name: Build v09 practical modelling stage
+        run: |
+          mkdir -p out
+          ./blender-5.2.1-linux-x64/blender --background --python .github/scripts/dtc_v09_editable_hood_split.py -- \
+            --blend base/DTC_SPRINT_A_v08_HOOD_COMPONENT_STAGE.blend \
+            --out-blend out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend \
+            --report out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT_report.json
+
+      - name: Fresh reload validation
+        run: |
+          cat > /tmp/validate_v09.py <<'PY'
+          import bpy, json, sys
+          from pathlib import Path
+          blend = Path(sys.argv[sys.argv.index('--') + 1])
+          report_path = Path(sys.argv[sys.argv.index('--') + 2])
+          bpy.ops.wm.open_mainfile(filepath=str(blend))
+          r = json.loads(report_path.read_text())
+          s = bpy.context.scene
+          assert s['dtc_asset_version'] == 'DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT'
+          assert bool(s['dtc_production_cut']) is True
+          assert bool(s['dtc_forensic_hood_boundary_claim']) is False
+          rb = bpy.data.objects['Frame_LOD0_v08_ROLLBACK']
+          body = bpy.data.objects['DTC_Body_LOD0']
+          hood = bpy.data.objects['DTC_Hood']
+          assert rb.hide_render and rb.hide_viewport
+          assert len(hood.data.polygons) == 438
+          assert len(body.data.polygons) + len(hood.data.polygons) == r['source']['faces']
+          assert len(body.data.polygons) == r['result']['body_faces']
+          assert len(hood.data.polygons) == r['result']['hood_faces']
+          assert r['result']['face_geometry_conserved_exactly'] is True
+          assert r['policy']['forensic_boundary_claim'] is False
+          print('V09_RELOAD_VALIDATION_PASS')
+          print(json.dumps({'body_faces': len(body.data.polygons), 'hood_faces': len(hood.data.polygons), 'rollback_faces': len(rb.data.polygons)}, indent=2))
+          PY
+          ./blender-5.2.1-linux-x64/blender --background --python /tmp/validate_v09.py -- \
+            out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend \
+            out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT_report.json
+
+      - name: Hash output
+        run: |
+          sha256sum out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.blend | tee out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT.sha256
+          cat out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT_report.json
+
+      - name: Retain report in transfer repo
+        run: |
+          cp out/DTC_SPRINT_A_v09_EDITABLE_HOOD_SPLIT_report.json reports/dtc_v09_editable_hood_split_20260902.json
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add reports/dtc_v09_editable_hood_split_20260902.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Record DTC v09 practical hood split report'
+            git push
+          fi
+
+      - name: Upload v09 authority artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-sprint-a-v09-editable-hood-split
+          path: out/
+          retention-days: 1
