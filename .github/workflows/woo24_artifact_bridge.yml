@@ -1,0 +1,21 @@
+name: WoO24 supplied archive bridge
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_artifact_bridge.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-supplied-archive
+          path: WOO24.zip
+          retention-days: 1
