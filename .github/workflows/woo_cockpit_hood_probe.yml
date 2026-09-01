@@ -1,0 +1,41 @@
+name: WoO cockpit hood witness probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo_cockpit_hood_probe.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and probe exact retail Global.pre
+        run: |
+          set -euo pipefail
+          test "$(stat -c%s Global.pre)" = "12401519"
+          test "$(sha256sum Global.pre | awk '{print $1}')" = "6219282c663faca7bde0ef955d864aee2aa6cde85532f1614da8517ae9f61289"
+          python -m py_compile .github/scripts/woo_cockpit_hood_probe.py
+          python .github/scripts/woo_cockpit_hood_probe.py Global.pre reports/woo_cockpit_hood_probe_20260901.json
+          python - <<'PY'
+          import json
+          p='reports/woo_cockpit_hood_probe_20260901.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['source']['sha256']=='6219282c663faca7bde0ef955d864aee2aa6cde85532f1614da8517ae9f61289'
+          assert d['external_parser_reproduction']['mesh_sections']==102
+          print('COCKPIT_PROBE_STATUS',d['cockpit_geometry']['status'])
+          print('COCKPIT_MESHFILES',d['cockpit_metadata']['meshfile_count'])
+          if 'first_eight' in d['cockpit_geometry']:
+              for x in d['cockpit_geometry']['first_eight']:
+                  print('HOOD_CONTRACT_ENTRY',x['index'],x['name'],x['vertex_count'],x['triangle_count'],x['raw_bounds'])
+          PY
+      - name: Commit derived report only
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/woo_cockpit_hood_probe_20260901.json
+          git commit -m "Record WoO cockpit hood witness probe" || exit 0
+          git push
