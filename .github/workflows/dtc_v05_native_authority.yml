@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/dtc_v05_native_authority.yml'
 
+# Native Blender metrics and exported GLB metrics are validated separately.
 jobs:
   build:
     runs-on: ubuntu-latest
