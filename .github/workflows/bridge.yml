@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/bridge.yml'
 
+# Refreshed 2026-09-03 for DTC G2-007 exact A01 donor recovery.
 jobs:
   bridge:
     runs-on: ubuntu-latest
@@ -17,7 +18,7 @@ jobs:
           name: woo-global-pre-transfer
           path: 'Global.pre'
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
       - name: Upload Big Ant A01 sprint car
         uses: actions/upload-artifact@v4
@@ -25,7 +26,7 @@ jobs:
           name: bigant-a01-sprintcar-transfer
           path: 'a01_sprintcar.zip'
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
       - name: Upload KKR Maxim reference
         uses: actions/upload-artifact@v4
@@ -33,5 +34,5 @@ jobs:
           name: kkr-maxim-reference-transfer
           path: '2010 KKR Maxim.zip'
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
