@@ -5,13 +5,19 @@ on:
     paths:
       - '.github/workflows/bridge.yml'
 
-# Refreshed 2026-09-03 for DTC G2-007 exact A01 donor recovery.
+# Refreshed 2026-09-03 for DTC G2-007 exact donor/toolchain recovery.
 jobs:
   bridge:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout transfer payload
         uses: actions/checkout@v4
+      - name: Checkout exact DTC G2-007 toolchain
+        uses: actions/checkout@v4
+        with:
+          repository: skinbeater123/Dirt-Track-Cowboys
+          ref: 15357ea8dbc088a7cbf9a98f6648d35f3433bd1a
+          path: dtc_source
       - name: Upload WoO Global PRE
         uses: actions/upload-artifact@v4
         with:
@@ -28,6 +34,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
+      - name: Upload DTC G2-007 authoring toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtc-g2-007-toolchain-15357ea8
+          path: 'dtc_source/probes/g2-007-car-donor-import/'
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
       - name: Upload KKR Maxim reference
         uses: actions/upload-artifact@v4
         with:
