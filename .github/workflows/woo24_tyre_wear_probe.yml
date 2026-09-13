@@ -1,0 +1,122 @@
+name: WoO24 tyre wear forensic gate
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tyre-wear-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout transfer payload
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Prepare exact supplied runtime and physics payloads
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_dump woo24_probe woo24_phys
+          unzip -q WOO24.zip -d woo24_input
+          unzip -q phys.zip -d woo24_phys
+          sha256sum WOO24.zip phys.zip > woo24_probe/source_hashes.txt
+          find woo24_input woo24_phys -type f -maxdepth 6 -print | sort >> woo24_probe/source_hashes.txt
+
+      - name: Build Il2CppDumper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          for k in ['DumpMethod','DumpField','DumpProperty','DumpAttribute','DumpFieldOffset','DumpMethodOffset','DumpTypeDefIndex','GenerateDummyDll']:
+              j[k]=True
+          j['RequireAnyKey']=False
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+
+      - name: Dump exact IL2CPP metadata
+        shell: bash
+        run: |
+          set -euxo pipefail
+          GAME=$(find woo24_input -type f -iname 'GameAssembly.dll' | head -1)
+          META=$(find woo24_input -type f -iname 'global-metadata.dat' | head -1)
+          DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -type f -name 'Il2CppDumper.dll' | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
+          dotnet "$DUMPER" "$GAME" "$META" "$PWD/woo24_dump" | tee woo24_probe/il2cppdumper.log
+
+      - name: Run managed and native tyre-wear probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 .github/scripts/woo24_tyre_wear_probe.py \
+            --root "$PWD/woo24_input" \
+            --dump "$PWD/woo24_dump" \
+            --phys "$PWD/woo24_phys" \
+            --out "$PWD/woo24_probe" \
+            > woo24_probe/console.txt
+          cat woo24_probe/woo24_tyre_wear_probe.txt
+
+      - name: Scan supplied sprint-car archives for tyre/wear presentation resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=woo24_probe/archive_resource_scan.txt
+          : > "$OUT"
+          scan_zip() {
+            local z="$1"
+            echo "===== ARCHIVE: $z =====" >> "$OUT"
+            if ! unzip -Z1 "$z" > /tmp/names.txt 2>/dev/null; then
+              echo "UNREADABLE_AS_ZIP" >> "$OUT"; return
+            fi
+            echo '-- candidate paths --' >> "$OUT"
+            grep -Ei 'tire|tyre|wheel|wear|sprint410|\.rab$|sharedassets|material|texture' /tmp/names.txt | head -1000 >> "$OUT" || true
+            echo '-- candidate embedded printable strings --' >> "$OUT"
+            grep -Ei 'tire|tyre|wheel|wear|sprint410|\.rab$' /tmp/names.txt | head -120 | while IFS= read -r f; do
+              echo "--- $f ---" >> "$OUT"
+              unzip -p "$z" "$f" 2>/dev/null | strings -n 4 | grep -Ei 'tire|tyre|wear|tread|compound|rubber|speed|dirt|normal|maos|albedo|rim|wheel|material|shader' | head -250 >> "$OUT" || true
+            done
+          }
+          scan_zip 'sprintcar 2 .zip'
+          cat sprinter.zip.001 sprinter.zip.002 > /tmp/sprinter.zip
+          scan_zip /tmp/sprinter.zip
+          cat 'Sprint Car Project.zip.001' 'Sprint Car Project.zip.002' > /tmp/sprint_project.zip
+          scan_zip /tmp/sprint_project.zip
+          cat "$OUT"
+
+      - name: Explicit wear-token census from dump.cs
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '===== DUMP.CS WEAR/TYRE TOKEN CENSUS ====='
+            grep -Ein -C 3 'TireWear|TyreWear|WearConfig|tire wear|tyre wear|tread|compound|GfxWheel|TireSpeed|Tire_LOD|wear' woo24_dump/dump.cs | head -4000 || true
+          } > woo24_probe/dumpcs_wear_census.txt
+          cat woo24_probe/dumpcs_wear_census.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-wear-forensic-gate
+          path: |
+            woo24_probe/woo24_tyre_wear_probe.txt
+            woo24_probe/archive_resource_scan.txt
+            woo24_probe/dumpcs_wear_census.txt
+            woo24_probe/source_hashes.txt
+            woo24_probe/il2cppdumper.log
+          if-no-files-found: error
+          retention-days: 1
