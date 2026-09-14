@@ -1,0 +1,168 @@
+name: WoO24 tyre wear native string xrefs
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_string_xrefs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  string-xrefs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate and disassemble tyre-wear functions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_string_xrefs
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_string_xrefs/source_hashes.txt
+          python3 - <<'PY' > woo24_string_xrefs/native_tyre_wear_string_xrefs.txt
+          import bisect, re, struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_MEM, X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll')
+          data=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+
+          needles=[
+            b'Wheel: wear_factor=%.0f min_wear_grip=%.2f player_tire_wear_factor=%.1f max_tirewear_drag=%+.3f',
+            b'driving aid wear: raw_tire_wear=%.2f curve_wear=%.2f aid_penalty=%.2f',
+            b'current_wear_speedfactor:%+.2f current racetime remaining: %+.3f',
+            b'0 && "Unknown " "TireWearCurve"',
+            b'Min Wear Grip:',
+            b'scrubby_wear_factor',
+            b'min_wear_grip',
+            b'max_tirewear_drag',
+            b'tirewear_average_blend_f',
+            b'tirewear_curve',
+            b'current_wear_grip',
+            b'so_called_wear_grip',
+            b'current_drag',
+            b'current_stiff',
+            b'asymmetric_temp_wear_f',
+            b'asymmetric_temp_wear_min_temp_diff',
+            b'asymmetric_temp_wear_max_temp_diff',
+            b'tire_wear_per_lap > 0',
+            b'ResourceMonitor/handle_new_sample: fuel_per_lap=%f tires_per_lap=%f',
+          ]
+
+          def fileoff_to_va(off):
+            rva=pe.get_rva_from_offset(off)
+            return base+rva
+
+          string_vas={}
+          print('WOO24 NATIVE TYRE-WEAR STRING XREF/FUNCTION PROBE')
+          print('='*96)
+          for n in needles:
+            start=0; hits=[]
+            while True:
+              off=data.find(n,start)
+              if off<0: break
+              try: hits.append((off,fileoff_to_va(off)))
+              except Exception: pass
+              start=off+1
+            string_vas[n.decode('ascii','replace')]=hits
+            for off,va in hits:
+              print(f'STRING va=0x{va:X} file=0x{off:X} {n.decode("ascii","replace")}')
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          text_rva=text.VirtualAddress
+          text_data=pe.get_data(text_rva,max(text.Misc_VirtualSize,text.SizeOfRawData))
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(text_data,base+text_rva))
+
+          def rip_targets(x):
+            if getattr(x,'id',0)==0: return []
+            try: ops=x.operands
+            except Exception: return []
+            out=[]
+            for op in ops:
+              if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                out.append(x.address+x.size+op.mem.disp)
+            return out
+
+          # Runtime function bounds from .pdata via pefile exception directory.
+          try:
+            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          except Exception:
+            pass
+          funcs=[]
+          for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[]):
+            st=base+e.struct.BeginAddress; en=base+e.struct.EndAddress
+            if en>st: funcs.append((st,en))
+          funcs=sorted(set(funcs))
+          starts=[x[0] for x in funcs]
+
+          def containing_func(addr):
+            i=bisect.bisect_right(starts,addr)-1
+            if i>=0 and funcs[i][0]<=addr<funcs[i][1]: return funcs[i]
+            return None
+
+          targets={va:label for label,hits in string_vas.items() for _,va in hits}
+          refs=[]
+          for x in ins:
+            for t in rip_targets(x):
+              if t in targets: refs.append((x.address,t,targets[t]))
+
+          print(f'\ntext_ins={len(ins)} runtime_functions={len(funcs)} string_xrefs={len(refs)}')
+          for a,t,label in refs:
+            f=containing_func(a)
+            print(f'XREF ins=0x{a:X} target=0x{t:X} func={f} label={label}')
+
+          # Disassemble each unique containing function completely.
+          unique=[]
+          for a,t,label in refs:
+            f=containing_func(a)
+            if f and f not in unique: unique.append(f)
+          print('\nFULL CONTAINING FUNCTIONS')
+          for st,en in unique:
+            print(f'\n### FUNCTION 0x{st:X}-0x{en:X} size={en-st} bytes')
+            fdata=pe.get_data(st-base,en-st)
+            fmd=Cs(CS_ARCH_X86,CS_MODE_64); fmd.detail=True
+            for x in fmd.disasm(fdata,st):
+              extras=[]
+              for t in rip_targets(x):
+                if t in targets: extras.append('STR='+targets[t])
+                try:
+                  raw=pe.get_data(t-base,4)
+                  if len(raw)==4:
+                    fv=struct.unpack('<f',raw)[0]
+                    if abs(fv)<100000 and fv==fv: extras.append(f'f32@0x{t:X}={fv:.9g}')
+                except Exception: pass
+              # Annotate common object/member displacements used in tyre.cpp-like code.
+              print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' | '.join(extras)) if extras else ''))
+
+          # Also show callers to the identified functions via relative CALL immediates.
+          print('\nCALLERS OF IDENTIFIED FUNCTIONS')
+          fstarts={st for st,en in unique}
+          for x in ins:
+            if getattr(x,'id',0)==0 or x.mnemonic!='call': continue
+            try:
+              if len(x.operands)==1 and x.operands[0].type==2:
+                tgt=x.operands[0].imm
+                if tgt in fstarts:
+                  print(f'call 0x{x.address:X} -> 0x{tgt:X} caller_func={containing_func(x.address)}')
+            except Exception: pass
+          PY
+          sed -n '1,12000p' woo24_string_xrefs/native_tyre_wear_string_xrefs.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-native-tyre-wear-string-xrefs
+          path: |
+            woo24_string_xrefs/native_tyre_wear_string_xrefs.txt
+            woo24_string_xrefs/source_hashes.txt
+          if-no-files-found: error
+          retention-days: 1
