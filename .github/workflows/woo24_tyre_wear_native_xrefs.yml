@@ -36,9 +36,8 @@ jobs:
           text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
           rva=text.VirtualAddress
           data=pe.get_data(rva, max(text.Misc_VirtualSize, text.SizeOfRawData))
-          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
           ins=list(md.disasm(data,base+rva))
-          idx={x.address:i for i,x in enumerate(ins)}
 
           WHEEL=0x18026C7E0
           WEARCFG=0x18026B688
@@ -59,6 +58,7 @@ jobs:
 
           def rip_targets(x):
             out=[]
+            if not hasattr(x,'operands'): return out
             for op in x.operands:
               if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
                 out.append(x.address+x.size+op.mem.disp)
@@ -100,7 +100,6 @@ jobs:
                 if WEARCFG<=rt<=WEARCFG+0xF: extras.append(f'WEARCFG+0x{rt-WEARCFG:X}')
               print(f'{mark} 0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+','.join(extras)) if extras else ''))
 
-          # Direct references to characteristic constants and all nearby code can help identify curve branches.
           print('\nKNOWN CONFIG GLOBAL RAW VALUES (startup image, before runtime setter)')
           for off,name in sorted(wheel_fields.items()):
             raw=pe.get_data(WHEEL-base+off,4)
