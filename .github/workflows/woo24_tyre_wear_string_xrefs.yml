@@ -92,7 +92,6 @@ jobs:
                 out.append(x.address+x.size+op.mem.disp)
             return out
 
-          # Runtime function bounds from .pdata via pefile exception directory.
           try:
             pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
           except Exception:
@@ -120,7 +119,6 @@ jobs:
             f=containing_func(a)
             print(f'XREF ins=0x{a:X} target=0x{t:X} func={f} label={label}')
 
-          # Disassemble each unique containing function completely.
           unique=[]
           for a,t,label in refs:
             f=containing_func(a)
@@ -140,10 +138,8 @@ jobs:
                     fv=struct.unpack('<f',raw)[0]
                     if abs(fv)<100000 and fv==fv: extras.append(f'f32@0x{t:X}={fv:.9g}')
                 except Exception: pass
-              # Annotate common object/member displacements used in tyre.cpp-like code.
               print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' | '.join(extras)) if extras else ''))
 
-          # Also show callers to the identified functions via relative CALL immediates.
           print('\nCALLERS OF IDENTIFIED FUNCTIONS')
           fstarts={st for st,en in unique}
           for x in ins:
