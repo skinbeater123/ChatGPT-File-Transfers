@@ -1,0 +1,129 @@
+name: WoO24 tyre wear curve callers
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_curve_callers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace wear curve and tyre runtime functions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_curve
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_curve/source_hashes.txt
+          python3 - <<'PY' > woo24_curve/curve_callers.txt
+          import bisect, struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll'); raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False); base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          funcs=sorted(set((base+e.struct.BeginAddress,base+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[x[0] for x in funcs]
+          def func(addr):
+            i=bisect.bisect_right(starts,addr)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=addr<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),base+text.VirtualAddress))
+          def ops(x):
+            if getattr(x,'id',0)==0: return []
+            try:return x.operands
+            except:return []
+          def rip_targets(x):
+            out=[]
+            for o in ops(x):
+              if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP: out.append(x.address+x.size+o.mem.disp)
+            return out
+
+          def disasm_func(f,label):
+            if not f: print('NO FUNC',label); return
+            st,en=f; print(f'\n### {label} FUNCTION 0x{st:X}-0x{en:X} size={en-st}')
+            d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+            for x in d.disasm(pe.get_data(st-base,en-st),st):
+              ext=[]
+              for t in rip_targets(x):
+                try:
+                  b=pe.get_data(t-base,4)
+                  if len(b)==4:
+                    fv=struct.unpack('<f',b)[0]
+                    if fv==fv and abs(fv)<1e5: ext.append(f'f32@0x{t:X}={fv:.9g}')
+                except: pass
+              print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}'+((' ; '+' | '.join(ext)) if ext else ''))
+
+          CURVE=0x1800BFE60
+          disasm_func(func(CURVE),'wear_curve_eval')
+
+          callers=[]
+          for x in ins:
+            if x.mnemonic!='call': continue
+            oo=ops(x)
+            if len(oo)==1 and oo[0].type==X86_OP_IMM and oo[0].imm==CURVE:
+              callers.append((x.address,func(x.address)))
+          print('\nDIRECT CALLERS OF wear_curve_eval')
+          for a,f in callers: print(f'call 0x{a:X} caller={f}')
+          uniq=[]
+          for _,f in callers:
+            if f and f not in uniq: uniq.append(f)
+          for i,f in enumerate(uniq): disasm_func(f,f'curve_caller_{i}')
+
+          # Pointer-chain xrefs for strings that did not show direct RIP-relative refs.
+          needles=[
+            b'driving aid wear: raw_tire_wear=%.2f curve_wear=%.2f aid_penalty=%.2f',
+            b'current_wear_speedfactor:%+.2f current racetime remaining: %+.3f',
+            b'compound_hardness < 1.5f', b'compound_hardness > .75f',
+            b'VF_NAME(VFWear).IsPresent()', b'!VF_NAME(VFWear).IsPresent()',
+            b'Wheel: wear_factor=%.0f min_wear_grip=%.2f player_tire_wear_factor=%.1f max_tirewear_drag=%+.3f'
+          ]
+          print('\nSTRING POINTER CHAINS')
+          for n in needles:
+            off=raw.find(n)
+            if off<0: print('MISSING',n); continue
+            sva=base+pe.get_rva_from_offset(off)
+            ptr=struct.pack('<Q',sva)
+            poffs=[]; pos=0
+            while True:
+              j=raw.find(ptr,pos)
+              if j<0: break
+              try: poffs.append((j,base+pe.get_rva_from_offset(j)))
+              except: pass
+              pos=j+1
+            print(f'\nSTRING 0x{sva:X} {n.decode("ascii","replace")} ptr_slots={[(hex(a),hex(v)) for a,v in poffs]}')
+            targets={sva}|{va for _,va in poffs}
+            refs=[]
+            for x in ins:
+              for t in rip_targets(x):
+                if t in targets: refs.append((x.address,t,func(x.address)))
+            for a,t,f in refs: print(f'  xref 0x{a:X} ->0x{t:X} func={f}')
+            seen=[]
+            for a,t,f in refs:
+              if f and f not in seen:
+                seen.append(f); disasm_func(f,'string_xref_'+n[:24].decode('ascii','replace'))
+          PY
+          sed -n '1,20000p' woo24_curve/curve_callers.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-wear-curve-callers
+          path: |
+            woo24_curve/curve_callers.txt
+            woo24_curve/source_hashes.txt
+          if-no-files-found: error
+          retention-days: 1
