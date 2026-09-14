@@ -1,0 +1,177 @@
+name: WoO24 tyre wear model deep probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_model_deep_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deep-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Prepare exact payloads
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_phys woo24_dump woo24_deep
+          unzip -q WOO24.zip -d woo24_input
+          unzip -q phys.zip -d woo24_phys
+          sha256sum WOO24.zip phys.zip woo24_input/GameAssembly.dll woo24_phys/physimpl.dll > woo24_deep/source_hashes.txt
+
+      - name: Build and run Il2CppDumper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          for k in ['DumpMethod','DumpField','DumpProperty','DumpAttribute','DumpFieldOffset','DumpMethodOffset','DumpTypeDefIndex','GenerateDummyDll']:
+              j[k]=True
+          j['RequireAnyKey']=False
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -name Il2CppDumper.dll | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
+          dotnet "$DUMPER" woo24_input/GameAssembly.dll woo24_input/global-metadata.dat "$PWD/woo24_dump" > woo24_deep/il2cppdumper.log
+
+      - name: Full managed declarations and targeted native disassembly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY' > woo24_deep/wear_model_deep_probe.txt
+          import re, struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_MEM, X86_REG_RIP
+
+          dump = Path('woo24_dump/dump.cs').read_text(encoding='utf-8', errors='replace')
+          print('WOO24 TYRE WEAR MODEL DEEP PROBE')
+          print('='*88)
+
+          targets = [
+              'PhysConfigTypes.WearConfig', 'PhysicsConfig.Wear',
+              'PhysConfigTypes.Wheel', 'PhysicsObjects.Wheel',
+              'PhysType.LTireStatus', 'PhysType.AITireWear',
+              'PhysType.PlayerTireWear', 'PhysType.PlayerTireWearGripFalloff',
+              'PhysicsObjects.TireWearCurve',
+              'TrackSettingsConfig.WearFactorType', 'TrackSettingsConfig.WearFactorInfo',
+              'TrackSettingsConfig.DirtAccumulationSetting',
+              'MGIOptionsHub.FriendlyGameOptions'
+          ]
+
+          blocks=[]
+          for part in re.split(r'(?=// Namespace: )', dump):
+              if not part.startswith('// Namespace: '):
+                  continue
+              lines=part.splitlines()
+              ns=lines[0].split(':',1)[1].strip()
+              name=None
+              for line in lines[1:45]:
+                  m=re.search(r'\b(?:class|struct|enum|interface)\s+([A-Za-z0-9_`<>.+]+)', line)
+                  if m:
+                      name=m.group(1); break
+              if name:
+                  blocks.append((f'{ns}.{name}' if ns else name, part))
+
+          print('\nFULL DECLARATIONS')
+          for want in targets:
+              print('\n###', want)
+              matches=[(n,b) for n,b in blocks if n==want or n.endswith('.'+want) or n==want.split('.')[-1]]
+              if not matches:
+                  # nested types often parse only short name; use namespace/block token fallback
+                  matches=[(n,b) for n,b in blocks if want.split('.')[-1] in b and ('WearFactor' in want or 'DirtAccumulation' in want)]
+              for n,b in matches[:3]:
+                  print(b[:24000])
+
+          print('\nKEYWORD METHOD INDEX')
+          for pat in ['wear','tire','tyre','scrub','compound','dirtAccumulation','screenWear']:
+              print('\n--',pat,'--')
+              for m in re.finditer(r'// RVA: 0x([0-9A-Fa-f]+)[^\n]*\n\s*([^\n]*'+re.escape(pat)+r'[^\n]*\([^\n]*\)[^\n]*)', dump, re.I):
+                  print('RVA 0x%s %s' % (m.group(1), m.group(2).strip()))
+
+          def disasm_with_literals(path, rva, count=180, label=''):
+              pe=pefile.PE(str(path), fast_load=False)
+              base=pe.OPTIONAL_HEADER.ImageBase
+              data=pe.get_data(rva, 4096)
+              md=Cs(CS_ARCH_X86, CS_MODE_64); md.detail=True
+              print(f'\n### DISASM {label} {path.name} RVA=0x{rva:X} VA=0x{base+rva:X}')
+              for i,ins in enumerate(md.disasm(data, base+rva)):
+                  if i>=count: break
+                  extras=[]
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          target=ins.address+ins.size+op.mem.disp
+                          trva=target-base
+                          try:
+                              raw=pe.get_data(trva, 8)
+                              if len(raw)>=4:
+                                  f=struct.unpack('<f',raw[:4])[0]
+                                  u=struct.unpack('<I',raw[:4])[0]
+                                  extras.append(f'rip->0x{target:X} raw32=0x{u:08X} f32={f:.9g}')
+                          except Exception:
+                              pass
+                  print(f'0x{ins.address:X}: {ins.mnemonic:<8} {ins.op_str}' + ((' ; '+' | '.join(extras)) if extras else ''))
+                  if ins.mnemonic=='ret' and i>5: break
+
+          game=Path('woo24_input/GameAssembly.dll')
+          managed = [
+              (0x29DA10,'GameOptions.get_physics_wear_factor'),
+              (0x29DBB0,'GameOptions.get_player_tire_wear / grip-falloff'),
+              (0x29D9D0,'GameOptions.get_player_tire_wear_rate / AI resource wear rate'),
+              (0x29DB70,'GameOptions.get_player_tire_wear_effect_f'),
+              (0x29D610,'GameOptions.MakeNativeGameOptions'),
+              (0x3C2650,'PhysicsConfig.Wear::.ctor'),
+              (0x3C2510,'PhysicsConfig.Wear::PushConfigToDLL'),
+              (0x250CF0,'PhysicsObjects.Wheel::.ctor'),
+              (0x3AD700,'Player/AITireWear preset A'),
+              (0x3AD710,'Player/AITireWear preset B'),
+              (0x3AD720,'Player/AITireWear preset C'),
+          ]
+          for rva,label in managed:
+              disasm_with_literals(game,rva,220,label)
+
+          impl=Path('woo24_phys/physimpl.dll')
+          pe=pefile.PE(str(impl), fast_load=False)
+          exports={((s.name or b'').decode('ascii','ignore')):s.address for s in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+          for name in ['PhysicsConfigSetWearConfig','PhysicsConfigSetWheel','AIGetPlayerTireWearPerLap']:
+              if name in exports:
+                  disasm_with_literals(impl,exports[name],260,name)
+
+          # Show printable physics strings around tyre model terminology.
+          data=impl.read_bytes()
+          print('\nPHYSIMPL RELEVANT PRINTABLE STRINGS')
+          strings=[]
+          for m in re.finditer(rb'[ -~]{4,}',data):
+              s=m.group().decode('ascii','ignore')
+              if re.search(r'tire|tyre|wear|scrub|compound|temperature|grip',s,re.I):
+                  strings.append(s)
+          for s in sorted(set(strings))[:2000]: print(s[:1000])
+          PY
+          sed -n '1,5000p' woo24_deep/wear_model_deep_probe.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-wear-model-deep-probe
+          path: |
+            woo24_deep/wear_model_deep_probe.txt
+            woo24_deep/source_hashes.txt
+            woo24_deep/il2cppdumper.log
+          if-no-files-found: error
+          retention-days: 1
