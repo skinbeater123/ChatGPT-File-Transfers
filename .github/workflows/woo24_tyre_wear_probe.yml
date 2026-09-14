@@ -80,15 +80,21 @@ jobs:
           scan_zip() {
             local z="$1"
             echo "===== ARCHIVE: $z =====" >> "$OUT"
+            sha256sum "$z" >> "$OUT"
             if ! unzip -Z1 "$z" > /tmp/names.txt 2>/dev/null; then
-              echo "UNREADABLE_AS_ZIP" >> "$OUT"; return
+              echo "UNREADABLE_AS_ZIP" >> "$OUT"; return 0
             fi
             echo '-- candidate paths --' >> "$OUT"
-            grep -Ei 'tire|tyre|wheel|wear|sprint410|\.rab$|sharedassets|material|texture' /tmp/names.txt | head -1000 >> "$OUT" || true
+            grep -Ei 'tire|tyre|wheel|wear|worn|tread|bald|fresh|used|scrub|scuff|rubber|sprint410|\.rab$|\.assets$|sharedassets|material|texture|bundle' /tmp/names.txt | head -1500 >> "$OUT" || true
             echo '-- candidate embedded printable strings --' >> "$OUT"
-            grep -Ei 'tire|tyre|wheel|wear|sprint410|\.rab$' /tmp/names.txt | head -120 | while IFS= read -r f; do
+            mapfile -t candidates < <(grep -Ei 'tire|tyre|wheel|wear|worn|tread|bald|fresh|used|scrub|scuff|rubber|sprint410|\.rab$|\.assets$|sharedassets|material|texture|bundle' /tmp/names.txt | head -240 || true)
+            if [ "${#candidates[@]}" -eq 0 ]; then
+              echo 'NO_CANDIDATE_MEMBERS' >> "$OUT"
+              return 0
+            fi
+            for f in "${candidates[@]}"; do
               echo "--- $f ---" >> "$OUT"
-              unzip -p "$z" "$f" 2>/dev/null | strings -n 4 | grep -Ei 'tire|tyre|wear|tread|compound|rubber|speed|dirt|normal|maos|albedo|rim|wheel|material|shader' | head -250 >> "$OUT" || true
+              unzip -p "$z" "$f" 2>/dev/null | strings -n 4 | grep -Ei 'tire|tyre|wear|worn|tread|bald|fresh|used|scrub|scuff|compound|rubber|speed|dirt|normal|nrm|maos|albedo|rim|wheel|material|shader|TireSpeed|Tire_LOD|Tire_Marker|Rim_Marker' | head -400 >> "$OUT" || true
             done
           }
           scan_zip 'sprintcar 2 .zip'
