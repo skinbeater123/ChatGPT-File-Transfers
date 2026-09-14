@@ -58,8 +58,14 @@ jobs:
 
           def rip_targets(x):
             out=[]
-            if not hasattr(x,'operands'): return out
-            for op in x.operands:
+            # Capstone skipdata pseudo-instructions have id == 0 and no usable detail.
+            if getattr(x,'id',0) == 0:
+              return out
+            try:
+              ops=x.operands
+            except Exception:
+              return out
+            for op in ops:
               if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
                 out.append(x.address+x.size+op.mem.disp)
             return out
