@@ -1,0 +1,56 @@
+name: WoO24 tyre wear curve cases
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_curve_cases.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode tyre wear curve evaluator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_curve_cases
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_curve_cases/source_hashes.txt
+          python3 - <<'PY' > woo24_curve_cases/curve_cases.txt
+          import struct
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_REG_RIP
+          pe=pefile.PE('woo24_phys/physimpl.dll',fast_load=False); base=pe.OPTIONAL_HEADER.ImageBase
+          start=0x1800BFE60; end=0x1800C0060
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          def rt(x):
+            if getattr(x,'id',0)==0:return []
+            try:ops=x.operands
+            except:return []
+            return [x.address+x.size+o.mem.disp for o in ops if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP]
+          print(f'RAW RANGE 0x{start:X}-0x{end:X}')
+          for x in md.disasm(pe.get_data(start-base,end-start),start):
+            ex=[]
+            for t in rt(x):
+              try:
+                b=pe.get_data(t-base,8)
+                if len(b)>=4:
+                  ex.append(f'@0x{t:X} u32=0x{struct.unpack("<I",b[:4])[0]:08X} f32={struct.unpack("<f",b[:4])[0]:.9g}')
+              except: pass
+            print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}'+((' ; '+' | '.join(ex)) if ex else ''))
+          PY
+          cat woo24_curve_cases/curve_cases.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-wear-curve-cases
+          path: |
+            woo24_curve_cases/curve_cases.txt
+            woo24_curve_cases/source_hashes.txt
+          retention-days: 1
