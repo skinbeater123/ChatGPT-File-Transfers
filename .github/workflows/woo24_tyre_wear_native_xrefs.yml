@@ -1,0 +1,121 @@
+name: WoO24 tyre wear native xrefs
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_wear_native_xrefs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  xrefs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace exact physimpl tyre-wear globals
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_xrefs
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_xrefs/source_hashes.txt
+          python3 - <<'PY' > woo24_xrefs/native_tyre_wear_xrefs.txt
+          import struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_MEM, X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll')
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          rva=text.VirtualAddress
+          data=pe.get_data(rva, max(text.Misc_VirtualSize, text.SizeOfRawData))
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          ins=list(md.disasm(data,base+rva))
+          idx={x.address:i for i,x in enumerate(ins)}
+
+          WHEEL=0x18026C7E0
+          WEARCFG=0x18026B688
+          wheel_fields={
+            0x00:'compound_lr',0x04:'compound_lf',0x08:'compound_rr',0x0C:'compound_rf',
+            0x10:'grip_lr',0x14:'grip_lf',0x18:'grip_rr',0x1C:'grip_rf',
+            0x20:'heat_lr',0x24:'heat_lf',0x28:'heat_rr',0x2C:'heat_rf',
+            0x30:'stiff_lr',0x34:'stiff_lf',0x38:'stiff_rr',0x3C:'stiff_rf',
+            0x40:'dirt_drag_factor',0x44:'dirt_fluct_factor',0x48:'dirt_grip_factor',0x4C:'force_limit',
+            0x50:'grass_drag_factor',0x54:'grass_fluct_factor',0x58:'grass_grip_factor',0x5C:'grip_factor',
+            0x60:'max_tirewear_drag',0x64:'min_wear_grip',0x68:'normal_tire_pressure_l',0x6C:'normal_tire_pressure_r',
+            0x70:'tire_pressure_can_increase_grip',0x74:'racetrack_fluct_factor',0x78:'lcamber',0x7C:'rcamber',
+            0x80:'static_camber_grip_falloff_f',0x84:'static_camber_grip_falloff_start',0x88:'static_camber_grip_falloff_stop',
+            0x8C:'tire_stretch_factor',0x90:'tirewear_average_blend_f',0x94:'tirewear_curve',0x98:'wear_factor',
+            0x9C:'enable_tire_temps',0x9D:'enable_tire_wear',0xA0:'min_wear',0xA4:'scrubby_wear_factor'
+          }
+          wear_fields={0x0:'blackbox_desired_laps_per_fuel',0x4:'blackbox_desired_laps_per_set_of_tires',0x8:'blackbox_recorded_laps_per_fuel',0xC:'blackbox_recorded_laps_per_set_of_tires'}
+
+          def rip_targets(x):
+            out=[]
+            for op in x.operands:
+              if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                out.append(x.address+x.size+op.mem.disp)
+            return out
+
+          hits=[]
+          for i,x in enumerate(ins):
+            for t in rip_targets(x):
+              if WHEEL <= t <= WHEEL+0xA8:
+                off=t-WHEEL
+                name=wheel_fields.get(off,f'wheel+0x{off:X}')
+                hits.append(('WHEEL',name,t,i))
+              if WEARCFG <= t <= WEARCFG+0xF:
+                off=t-WEARCFG
+                name=wear_fields.get(off,f'wearcfg+0x{off:X}')
+                hits.append(('WEARCFG',name,t,i))
+
+          print('WOO24 NATIVE TYRE-WEAR GLOBAL XREF PROBE')
+          print('='*92)
+          print(f'physimpl imagebase=0x{base:X} wheel_global=0x{WHEEL:X} wearcfg_global=0x{WEARCFG:X}')
+          print(f'text instructions={len(ins)} xrefs={len(hits)}')
+          print('\nXREF SUMMARY')
+          from collections import Counter
+          c=Counter((dom,name) for dom,name,_,_ in hits)
+          for (dom,name),n in sorted(c.items()): print(f'{dom:7s} {name:42s} {n:4d}')
+
+          interesting={'max_tirewear_drag','min_wear_grip','tirewear_average_blend_f','tirewear_curve','wear_factor','enable_tire_wear','min_wear','scrubby_wear_factor','blackbox_desired_laps_per_set_of_tires','blackbox_recorded_laps_per_set_of_tires'}
+          print('\nINTERESTING XREF CONTEXTS')
+          for dom,name,t,i in hits:
+            if name not in interesting: continue
+            print(f'\n### {dom}.{name} target=0x{t:X} xref=0x{ins[i].address:X}')
+            lo=max(0,i-28); hi=min(len(ins),i+45)
+            for j in range(lo,hi):
+              x=ins[j]
+              mark='>>' if j==i else '  '
+              extras=[]
+              for rt in rip_targets(x):
+                if WHEEL<=rt<=WHEEL+0xA8: extras.append(f'WHEEL+0x{rt-WHEEL:X}')
+                if WEARCFG<=rt<=WEARCFG+0xF: extras.append(f'WEARCFG+0x{rt-WEARCFG:X}')
+              print(f'{mark} 0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+','.join(extras)) if extras else ''))
+
+          # Direct references to characteristic constants and all nearby code can help identify curve branches.
+          print('\nKNOWN CONFIG GLOBAL RAW VALUES (startup image, before runtime setter)')
+          for off,name in sorted(wheel_fields.items()):
+            raw=pe.get_data(WHEEL-base+off,4)
+            if len(raw)==4:
+              u=struct.unpack('<I',raw)[0]; f=struct.unpack('<f',raw)[0]
+              print(f'{name:42s} off=0x{off:02X} raw=0x{u:08X} f32={f:.9g}')
+          PY
+          sed -n '1,7000p' woo24_xrefs/native_tyre_wear_xrefs.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-native-tyre-wear-xrefs
+          path: |
+            woo24_xrefs/native_tyre_wear_xrefs.txt
+            woo24_xrefs/source_hashes.txt
+          if-no-files-found: error
+          retention-days: 1
