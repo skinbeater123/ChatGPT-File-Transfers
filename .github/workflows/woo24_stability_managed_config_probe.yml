@@ -1,4 +1,5 @@
 name: WoO24 stability managed config probe
+# refreshed after registration
 
 on:
   push:
