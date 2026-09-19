@@ -1,0 +1,39 @@
+name: WoO24 runtime axle constructor probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_runtime_axle_constructor_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disassemble runtime axle constructor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY'
+          import bisect,pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          pe=pefile.PE('woo24_phys/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories()
+          funcs=sorted((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                       for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          a=0x18007CBD0
+          i=bisect.bisect_right(starts,a)-1
+          f=funcs[i]
+          print('function',hex(f[0]),hex(f[1]),'size',f[1]-f[0])
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True
+          for x in md.disasm(pe.get_data(f[0]-base,f[1]-f[0]),f[0]):
+              print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}')
+          PY
