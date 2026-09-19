@@ -1,0 +1,75 @@
+name: WoO24 axle exact xrefs
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_exact_xrefs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exact front/rear axle config xrefs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY'
+          import bisect
+          from collections import defaultdict
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_REG_RIP
+          pe=pefile.PE('woo24_phys/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories()
+          funcs=sorted((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                       for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          def fn(a):
+            i=bisect.bisect_right(starts,a)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=a<funcs[i][1] else None
+          fields={
+            0x54:'friction',0x58:'moment',
+            0x68:'magic_b',0x6C:'magic_c',0x70:'magic_d',0x74:'magic_e',
+            0x78:'frict_load1',0x7C:'frict_k1',0x80:'frict_load2',0x84:'frict_k2',
+            0x88:'stiff_load1',0x8C:'stiff_c1',0x90:'stiff_load2',0x94:'stiff_c2',
+            0x98:'camber_stiff',0x9C:'camber_peak',0xA0:'camber_grip',
+            0xA4:'long_stiff',0xA8:'long_frict',
+            0xAC:'grip_fade_start',0xB0:'grip_fade_stop',0xB4:'grip_fade',0xB8:'ref_width',
+          }
+          bases={'rear':0x180273660,'front':0x180273720}
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          refs=defaultdict(list)
+          for x in md.disasm(pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),base+text.VirtualAddress):
+            if getattr(x,'id',0)==0: continue
+            for o in x.operands:
+              if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP:
+                t=x.address+x.size+o.mem.disp
+                for axle,b in bases.items():
+                  off=t-b
+                  if off in fields:
+                    refs[(axle,fields[off])].append((x.address,fn(x.address),x.mnemonic,x.op_str))
+          print("WOO24 EXACT AXLE CONFIG XREFS")
+          print("="*90)
+          consumers=defaultdict(set)
+          for axle in ['front','rear']:
+            print("\n###",axle.upper(),hex(bases[axle]))
+            for off,name in fields.items():
+              rr=refs.get((axle,name),[])
+              if rr:
+                print(f"{name:20s} {len(rr):3d}")
+                for a,f,m,o in rr:
+                  print(f"  0x{a:X} func={f} {m} {o}")
+                  if f: consumers[f].add((axle,name))
+          print("\n### CONSUMER FUNCTIONS")
+          for f,names in sorted(consumers.items()):
+            print(f"{f} -> {sorted(names)}")
+          PY
