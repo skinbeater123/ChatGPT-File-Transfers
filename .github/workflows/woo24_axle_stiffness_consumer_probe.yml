@@ -1,0 +1,149 @@
+name: WoO24 axle stiffness consumer probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_stiffness_consumer_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace axle config globals and stiffness consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_out
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+
+          python3 - <<'PY' > woo24_out/axle_stiffness_probe.txt
+          import bisect, struct
+          from collections import defaultdict
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
+
+          pe=pefile.PE('woo24_phys/physimpl.dll',fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[
+              pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION'],
+              pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT'],
+          ])
+          funcs=sorted(set((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                           for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[x[0] for x in funcs]
+          def fn(a):
+              i=bisect.bisect_right(starts,a)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=a<funcs[i][1] else None
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),base+text.VirtualAddress))
+          def ops(x):
+              try:return x.operands if getattr(x,'id',0) else []
+              except:return []
+          def rips(x):
+              return [x.address+x.size+o.mem.disp for o in ops(x)
+                      if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP]
+          exports={((s.name or b'').decode('ascii','ignore')):base+s.address for s in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+
+          fields={
+            0x54:'friction',0x58:'moment',
+            0x68:'magic_b',0x6C:'magic_c',0x70:'magic_d',0x74:'magic_e',
+            0x78:'frict_load1',0x7C:'frict_k1',0x80:'frict_load2',0x84:'frict_k2',
+            0x88:'stiff_load1',0x8C:'stiff_c1',0x90:'stiff_load2',0x94:'stiff_c2',
+            0x98:'camber_stiff',0x9C:'camber_peak',0xA0:'camber_grip',
+            0xA4:'long_stiff',0xA8:'long_frict',
+            0xAC:'grip_fade_start',0xB0:'grip_fade_stop',0xB4:'grip_fade',0xB8:'ref_width',
+          }
+
+          print('WOO24 AXLE STIFFNESS CONSUMER PROBE')
+          print('='*100)
+          for n in ['PhysicsConfigSetFrontAxle','PhysicsConfigSetRearAxle']:
+              print(n,hex(exports.get(n,0)))
+
+          def disasm_func(f,label):
+              if not f:return
+              st,en=f
+              print(f'\n### {label} 0x{st:X}-0x{en:X} size={en-st}')
+              for x in ins:
+                  if not (st<=x.address<en):continue
+                  ext=[f'RIP=0x{t:X}' for t in rips(x)]
+                  print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' '.join(ext)) if ext else ''))
+
+          setter_globals={}
+          for n in ['PhysicsConfigSetFrontAxle','PhysicsConfigSetRearAxle']:
+              a=exports.get(n)
+              f=fn(a) if a else None
+              disasm_func(f,n)
+              candidates=[]
+              if f:
+                  for x in ins:
+                      if f[0]<=x.address<f[1]:
+                          for t in rips(x):
+                              # writable data globals in image high-data region
+                              if base+0x200000 <= t <= base+0x300000:
+                                  candidates.append(t)
+              setter_globals[n]=sorted(set(candidates))
+              print(f'GLOBAL_CANDIDATES {n}: {[hex(x) for x in setter_globals[n]]}')
+
+          # Find likely Axle struct bases: any candidate for which xrefs cluster across +0x54..+0xB8.
+          candidate_bases=set()
+          for vals in setter_globals.values():
+              candidate_bases.update(vals)
+          # Include aligned nearby addresses because setter may reference base through LEA.
+          expanded=set()
+          for g in candidate_bases:
+              for delta in range(-0xC0,0xC1,4):
+                  expanded.add(g+delta)
+
+          scored=[]
+          for b in expanded:
+              score=0; names=set()
+              for x in ins:
+                  for t in rips(x):
+                      off=t-b
+                      if off in fields:
+                          score+=1; names.add(fields[off])
+              if len(names)>=3:
+                  scored.append((len(names),score,b,names))
+          scored=sorted(scored,reverse=True)[:20]
+          print('\nLIKELY AXLE CONFIG BASES')
+          for nrefs,score,b,names in scored:
+              print(f'base=0x{b:X} unique={nrefs} refs={score} fields={sorted(names)}')
+
+          for rank,(_,_,b,names) in enumerate(scored[:6]):
+              refs=defaultdict(list)
+              for x in ins:
+                  for t in rips(x):
+                      off=t-b
+                      if off in fields:
+                          refs[fields[off]].append((x.address,fn(x.address),x.mnemonic,x.op_str))
+              print(f'\n=== BASE[{rank}] 0x{b:X} ===')
+              for name in fields.values():
+                  rr=refs.get(name,[])
+                  if rr:
+                      print(f'{name:20s} count={len(rr)}')
+                      for a,f,m,o in rr[:40]:
+                          print(f'  0x{a:X} func={f} {m} {o}')
+              consumer=set(f for rr in refs.values() for _,f,_,_ in rr if f)
+              for i,f in enumerate(sorted(consumer)):
+                  disasm_func(f,f'base{rank}_consumer{i}')
+
+          PY
+          sed -n '1,40000p' woo24_out/axle_stiffness_probe.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-stiffness-consumer-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
