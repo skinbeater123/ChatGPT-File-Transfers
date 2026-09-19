@@ -1,0 +1,62 @@
+name: WoO24 axle pointer provenance probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_pointer_provenance_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace vehicle front/rear runtime axle subobject pointers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY'
+          import bisect
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM
+
+          pe=pefile.PE('woo24_phys/physimpl.dll',fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories()
+          funcs=sorted((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                       for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          def fn(a):
+            i=bisect.bisect_right(starts,a)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=a<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          ins=list(md.disasm(pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),base+text.VirtualAddress))
+          byfunc={}
+          for i,x in enumerate(ins):
+            if getattr(x,'id',0)==0: continue
+            for o in x.operands:
+              if o.type==X86_OP_MEM and o.mem.disp in (0x18c,0x250):
+                f=fn(x.address)
+                if not f: continue
+                byfunc.setdefault(f,[]).append((i,x.address,o.mem.disp,x.mnemonic,x.op_str))
+          print('WOO24 AXLE POINTER PROVENANCE')
+          print('='*100)
+          for f,hits in sorted(byfunc.items()):
+            disps=sorted(set(d for _,_,d,_,_ in hits))
+            if len(hits)<1: continue
+            print(f'\nFUNCTION 0x{f[0]:X}-0x{f[1]:X} size={f[1]-f[0]} hits={len(hits)} disps={[hex(x) for x in disps]}')
+            for i,a,d,m,o in hits:
+              print(f'  HIT 0x{a:X} {m:<8} {o} ; axleSub=+0x{d:X}')
+              print('  CONTEXT')
+              for y in ins[max(0,i-14):min(len(ins),i+25)]:
+                mark=' <===' if y.address==a else ''
+                print(f'    0x{y.address:X}: {y.mnemonic:<8} {y.op_str}{mark}')
+          PY
