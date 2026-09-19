@@ -56,14 +56,16 @@ jobs:
                 t=x.address+x.size+o.mem.disp
                 for axle,b in bases.items():
                   off=t-b
-                  if off in fields:
-                    refs[(axle,fields[off])].append((x.address,fn(x.address),x.mnemonic,x.op_str))
+                  if 0 <= off <= 0xB8:
+                    name=fields.get(off,f"offset_0x{off:X}")
+                    refs[(axle,name)].append((x.address,fn(x.address),x.mnemonic,x.op_str))
           print("WOO24 EXACT AXLE CONFIG XREFS")
           print("="*90)
           consumers=defaultdict(set)
           for axle in ['front','rear']:
             print("\n###",axle.upper(),hex(bases[axle]))
-            for off,name in fields.items():
+            names=sorted({name for (a,name) in refs if a==axle})
+            for name in names:
               rr=refs.get((axle,name),[])
               if rr:
                 print(f"{name:20s} {len(rr):3d}")
