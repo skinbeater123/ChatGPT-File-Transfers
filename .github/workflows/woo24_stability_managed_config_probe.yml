@@ -1,0 +1,78 @@
+name: WoO24 stability managed config probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_stability_managed_config_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Dump managed stability and tyre config types
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_dump woo24_out
+          unzip -q WOO24.zip -d woo24_input
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          for k in ['DumpMethod','DumpField','DumpProperty','DumpAttribute','DumpFieldOffset','DumpMethodOffset','DumpTypeDefIndex']:
+              j[k]=True
+          j['RequireAnyKey']=False
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          DUMPER=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -name Il2CppDumper.dll | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$DUMPER")/config.json"
+          dotnet "$DUMPER" woo24_input/GameAssembly.dll woo24_input/global-metadata.dat "$PWD/woo24_dump" > woo24_out/il2cppdumper.log
+
+          python3 - <<'PY' > woo24_out/stability_managed_config.txt
+          import re
+          from pathlib import Path
+          dump=Path('woo24_dump/dump.cs').read_text(encoding='utf-8',errors='replace')
+          terms=[
+              'arc_stability_help','intermediate_yaw_control','intermediate_yaw_control_min',
+              'yaw_control_f','postcontact_stability_control_duration',
+              'speed_sens_steering','speed_sens_steering_min_speed','speed_sens_steering_max_speed',
+              'arcade_total_yaw_force','arcade_oversteer_bias','rear_lat_grip_f',
+              'stiff_c1','stiff_c2','stiff_load1','stiff_load2','long_stiff','current_stiff',
+              'grip_lr','grip_lf','grip_rr','grip_rf','stiff_lr','stiff_lf','stiff_rr','stiff_rf',
+              'compound_lr','compound_lf','compound_rr','compound_rf',
+              'normal_tire_pressure_l','normal_tire_pressure_r','tire_stretch_factor'
+          ]
+          blocks=[]
+          for part in re.split(r'(?=// Namespace: )',dump):
+              if not part.startswith('// Namespace: '): continue
+              low=part.lower()
+              hits=[t for t in terms if t.lower() in low]
+              if hits: blocks.append((hits,part))
+          print('WOO24 MANAGED STABILITY / TYRE CONFIG TYPE PROBE')
+          print('='*100)
+          for hits,part in blocks:
+              print('\nHITS',hits)
+              print(part[:50000])
+          PY
+          sed -n '1,20000p' woo24_out/stability_managed_config.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-stability-managed-config-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
