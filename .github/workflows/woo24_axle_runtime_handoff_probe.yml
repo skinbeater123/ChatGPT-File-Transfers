@@ -1,0 +1,44 @@
+name: WoO24 axle runtime handoff probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_runtime_handoff_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace runtime axle handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY'
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          pe=pefile.PE('woo24_phys/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          targets=[
+            (0x18003D54B,0x18003EB00,[0x18003DE0B,0x18003DDC1],'config_path'),
+            (0x18007D1B0,0x18007DA95,[0x18007D9FB,0x18007DA3F],'runtime_handoff'),
+          ]
+          for st,en,marks,label in targets:
+              ins=list(md.disasm(pe.get_data(st-base,en-st),st))
+              byaddr={x.address:i for i,x in enumerate(ins)}
+              print('\n###',label,hex(st),hex(en),'instructions',len(ins))
+              for mark in marks:
+                  i=byaddr.get(mark)
+                  print('\n--- context around',hex(mark),'index',i,'---')
+                  if i is None: continue
+                  for x in ins[max(0,i-100):min(len(ins),i+130)]:
+                      tag=' <=== AXLE REF' if x.address==mark else ''
+                      print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}{tag}')
+          PY
