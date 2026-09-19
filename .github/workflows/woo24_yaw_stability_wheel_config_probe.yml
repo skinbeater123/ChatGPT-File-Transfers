@@ -1,0 +1,178 @@
+name: WoO24 yaw stability wheel config probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_yaw_stability_wheel_config_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace corner-specific wheel grip/stiffness consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_out
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_out/source_hashes.txt
+          unzip -l WOO24.zip > woo24_out/woo24_zip_listing.txt || true
+
+          python3 - <<'PY' > woo24_out/wheel_config_probe.txt
+          import bisect, re, struct
+          from collections import Counter, defaultdict
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll')
+          raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+
+          funcs=sorted(set(
+              (base+e.struct.BeginAddress,base+e.struct.EndAddress)
+              for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[])
+              if e.struct.EndAddress>e.struct.BeginAddress
+          ))
+          starts=[x[0] for x in funcs]
+          def containing_func(addr):
+              i=bisect.bisect_right(starts,addr)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=addr<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(
+              pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),
+              base+text.VirtualAddress
+          ))
+
+          def operands(x):
+              if getattr(x,'id',0)==0: return []
+              try:return x.operands
+              except:return []
+          def rip_targets(x):
+              out=[]
+              for op in operands(x):
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      out.append(x.address+x.size+op.mem.disp)
+              return out
+
+          WHEEL=0x18026C7E0
+          fields={
+            0x00:'compound_lr',0x04:'compound_lf',0x08:'compound_rr',0x0C:'compound_rf',
+            0x10:'grip_lr',0x14:'grip_lf',0x18:'grip_rr',0x1C:'grip_rf',
+            0x20:'heat_lr',0x24:'heat_lf',0x28:'heat_rr',0x2C:'heat_rf',
+            0x30:'stiff_lr',0x34:'stiff_lf',0x38:'stiff_rr',0x3C:'stiff_rf',
+            0x40:'dirt_drag_factor',0x44:'dirt_fluct_factor',0x48:'dirt_grip_factor',0x4C:'force_limit',
+            0x50:'grass_drag_factor',0x54:'grass_fluct_factor',0x58:'grass_grip_factor',0x5C:'grip_factor',
+            0x60:'max_tirewear_drag',0x64:'min_wear_grip',
+            0x68:'normal_tire_pressure_l',0x6C:'normal_tire_pressure_r',
+            0x70:'tire_pressure_can_increase_grip',
+            0x74:'racetrack_fluct_factor',0x78:'lcamber',0x7C:'rcamber',
+            0x80:'static_camber_grip_falloff_f',0x84:'static_camber_grip_falloff_start',
+            0x88:'static_camber_grip_falloff_stop',0x8C:'tire_stretch_factor',
+            0x90:'tirewear_average_blend_f',0x94:'tirewear_curve',0x98:'wear_factor',
+            0x9C:'enable_tire_temps',0x9D:'enable_tire_wear',0xA0:'min_wear',0xA4:'scrubby_wear_factor'
+          }
+
+          hits=[]
+          for idx,x in enumerate(ins):
+              for t in rip_targets(x):
+                  if WHEEL <= t <= WHEEL+0xA7:
+                      off=t-WHEEL
+                      hits.append((fields.get(off,f'wheel+0x{off:X}'),off,t,idx,containing_func(x.address)))
+
+          print('WOO24 YAW-STABILITY / CORNER-SPECIFIC WHEEL CONFIG PROBE')
+          print('='*100)
+          print(f'imagebase=0x{base:X} wheel_global=0x{WHEEL:X}')
+          print(f'text instructions={len(ins)} xrefs={len(hits)}')
+
+          print('\nFIELD XREF SUMMARY')
+          counts=Counter(name for name,_,_,_,_ in hits)
+          for name in fields.values():
+              print(f'{name:38s} {counts[name]:4d}')
+
+          focus={'grip_lr','grip_lf','grip_rr','grip_rf','stiff_lr','stiff_lf','stiff_rr','stiff_rf',
+                 'compound_lr','compound_lf','compound_rr','compound_rf',
+                 'normal_tire_pressure_l','normal_tire_pressure_r','grip_factor',
+                 'static_camber_grip_falloff_f','tire_stretch_factor'}
+
+          byfunc=defaultdict(set)
+          for name,off,t,idx,f in hits:
+              if f and name in focus: byfunc[f].add(name)
+
+          print('\nFUNCTIONS READING CORNER-SPECIFIC GRIP/STIFFNESS/COMPOUND')
+          for f,names in sorted(byfunc.items()):
+              print(f'0x{f[0]:X}-0x{f[1]:X} size={f[1]-f[0]:5d}  {sorted(names)}')
+
+          def disasm_func(f,label):
+              if not f:return
+              st,en=f
+              print(f'\n### {label} FUNCTION 0x{st:X}-0x{en:X} size={en-st}')
+              d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+              for x in d.disasm(pe.get_data(st-base,en-st),st):
+                  extras=[]
+                  for t in rip_targets(x):
+                      if WHEEL<=t<=WHEEL+0xA7:
+                          off=t-WHEEL
+                          extras.append('CFG.'+fields.get(off,f'+0x{off:X}'))
+                  print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+','.join(extras)) if extras else ''))
+
+          # Export setter.
+          exports={}
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+              exports={((s.name or b'').decode('ascii','ignore')):s.address for s in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+          print('\nEXPORTS OF INTEREST')
+          for name in sorted(exports):
+              if re.search(r'Wheel|Tire|Tyre|Axle|Stab|Steer|Damp',name,re.I):
+                  print(f'{name:52s} RVA=0x{exports[name]:X} VA=0x{base+exports[name]:X}')
+          if 'PhysicsConfigSetWheel' in exports:
+              disasm_func(containing_func(base+exports['PhysicsConfigSetWheel']),'PhysicsConfigSetWheel')
+
+          # Fully disassemble unique consumers of grip/stiff fields.
+          chosen=[]
+          for f,names in sorted(byfunc.items()):
+              if any(n.startswith('grip_') or n.startswith('stiff_') for n in names):
+                  if f not in chosen: chosen.append(f)
+          for i,f in enumerate(chosen[:24]):
+              disasm_func(f,f'grip_stiff_consumer_{i}_{sorted(byfunc[f])}')
+
+          # Printable strings relevant to stability and tyre-force architecture.
+          print('\nRELEVANT PRINTABLE STRINGS')
+          vals=[]
+          for m in re.finditer(rb'[ -~]{4,}',raw):
+              s=m.group().decode('ascii','ignore')
+              if re.search(r'tire|tyre|wheel|grip|stiff|slip|lateral|longitudinal|yaw|stabil|damp|steer|relax|corner|camber|pressure|compound',s,re.I):
+                  vals.append(s)
+          for s in sorted(set(vals)):
+              print(s[:1000])
+
+          # Also show direct CALL graph around grip/stiff readers.
+          targets={f[0] for f in chosen}
+          print('\nDIRECT CALLERS OF GRIP/STIFF CONSUMERS')
+          for x in ins:
+              if x.mnemonic!='call': continue
+              oo=operands(x)
+              if len(oo)==1 and oo[0].type==X86_OP_IMM and oo[0].imm in targets:
+                  print(f'call 0x{x.address:X} -> 0x{oo[0].imm:X} caller={containing_func(x.address)}')
+          PY
+
+          sed -n '1,20000p' woo24_out/wheel_config_probe.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-yaw-stability-wheel-config-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
