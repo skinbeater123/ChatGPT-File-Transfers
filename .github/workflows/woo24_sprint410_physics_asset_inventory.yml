@@ -1,0 +1,51 @@
+name: WoO24 Sprint410 physics asset inventory
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sprint410_physics_asset_inventory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inventory existing Sprint 410 archives
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_out
+          python3 - <<'PY' > woo24_out/inventory.txt
+          from pathlib import Path
+          import zipfile
+          print("WOO24 SPRINT410 PHYSICS-ASSET INVENTORY")
+          print("="*90)
+          for name in ["a01_sprintcar.zip","sprintcar 2 .zip","WOO24.zip"]:
+              p=Path(name)
+              print(f"\n### {name} exists={p.exists()} size={p.stat().st_size if p.exists() else None}")
+              if not p.exists(): continue
+              try:
+                  with zipfile.ZipFile(p) as z:
+                      infos=z.infolist()
+                      print(f"entries={len(infos)}")
+                      for i in infos:
+                          low=i.filename.lower()
+                          if any(k in low for k in ["sprint","410","tire","tyre","wheel","phys","axle","chassis","car","rab","asset","bundle"]):
+                              print(f"{i.file_size:12d}  {i.filename}")
+              except Exception as e:
+                  print("ZIP_ERROR",repr(e))
+          PY
+          cat woo24_out/inventory.txt
+
+      - name: Upload inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-sprint410-physics-asset-inventory
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
