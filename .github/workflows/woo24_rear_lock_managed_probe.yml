@@ -1,0 +1,56 @@
+name: WoO24 rear lock managed probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rear_lock_managed_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Dump differential / spool / axle-lock managed config
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_dump
+          unzip -q WOO24.zip -d woo24_input
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          for k in ['DumpMethod','DumpField','DumpProperty','DumpAttribute','DumpFieldOffset','DumpMethodOffset','DumpTypeDefIndex']:
+              j[k]=True
+          j['RequireAnyKey']=False
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -name Il2CppDumper.dll | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$D")/config.json"
+          dotnet "$D" woo24_input/GameAssembly.dll woo24_input/global-metadata.dat "$PWD/woo24_dump" >/dev/null
+
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          dump=Path('woo24_dump/dump.cs').read_text(encoding='utf-8',errors='replace')
+          pats=re.compile(r'diff|differential|spool|locked|locker|limited.?slip|lsd|axle.?lock|rear.?lock|wheel.?lock|drive.?stiff|torsion',re.I)
+          print('WOO24 REAR LOCK / DIFFERENTIAL MANAGED PROBE')
+          print('='*100)
+          for part in re.split(r'(?=// Namespace: )',dump):
+              if not part.startswith('// Namespace: '): continue
+              if pats.search(part):
+                  # Only vehicle/physics-like blocks; skip generic collection/linq diff noise.
+                  if re.search(r'Phys|Chassis|Axle|Transmission|Differ|Drive|Wheel|Car|Setup|Drivetrain|Gear',part,re.I):
+                      print('\n'+part[:50000])
+          PY
