@@ -1,5 +1,6 @@
 name: WoO24 Sprint410 physics asset inventory
 # refreshed after registration
+# trigger 2
 
 on:
   push:
