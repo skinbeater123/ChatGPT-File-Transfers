@@ -1,0 +1,48 @@
+name: WoO24 axle setter probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_setter_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disassemble axle setters
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          python3 - <<'PY'
+          import bisect
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_REG_RIP
+          pe=pefile.PE('woo24_phys/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories()
+          funcs=sorted((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                       for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          def fn(a):
+            i=bisect.bisect_right(starts,a)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=a<funcs[i][1] else None
+          ex={((x.name or b'').decode('ascii','ignore')):base+x.address for x in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True
+          for n in ['PhysicsConfigSetFrontAxle','PhysicsConfigSetRearAxle']:
+            a=ex[n]; f=fn(a)
+            print('\n',n,hex(a),'func',f)
+            for x in md.disasm(pe.get_data(f[0]-base,f[1]-f[0]),f[0]):
+              extra=[]
+              for o in x.operands:
+                if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP:
+                  extra.append(f'RIP=0x{x.address+x.size+o.mem.disp:X}')
+              print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' '.join(extra)) if extra else ''))
+          PY
