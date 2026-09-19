@@ -44,14 +44,19 @@ jobs:
           python3 - <<'PY'
           import re
           from pathlib import Path
-          dump=Path('woo24_dump/dump.cs').read_text(encoding='utf-8',errors='replace')
-          pats=re.compile(r'diff|differential|spool|locked|locker|limited.?slip|lsd|axle.?lock|rear.?lock|wheel.?lock|drive.?stiff|torsion',re.I)
-          print('WOO24 REAR LOCK / DIFFERENTIAL MANAGED PROBE')
+          lines=Path('woo24_dump/dump.cs').read_text(encoding='utf-8',errors='replace').splitlines()
+          pat=re.compile(r'\b(diff(?:erential)?|spool|limited.?slip|lsd|axle.?lock|drive.?stiff)\b',re.I)
+          type_pat=re.compile(r'^(public|private|internal|protected).*\b(class|struct|enum)\b')
+          print('WOO24 REAR LOCK / DIFFERENTIAL MANAGED PROBE — FOCUSED')
           print('='*100)
-          for part in re.split(r'(?=// Namespace: )',dump):
-              if not part.startswith('// Namespace: '): continue
-              if pats.search(part):
-                  # Only vehicle/physics-like blocks; skip generic collection/linq diff noise.
-                  if re.search(r'Phys|Chassis|Axle|Transmission|Differ|Drive|Wheel|Car|Setup|Drivetrain|Gear',part,re.I):
-                      print('\n'+part[:50000])
+          current_type=''
+          for i,line in enumerate(lines):
+              if type_pat.search(line.strip()):
+                  current_type=line.strip()
+              if pat.search(line):
+                  owner=current_type
+                  if re.search(r'Phys|Chassis|Axle|Transmission|Differ|Drive|Wheel|Car|Setup|Drivetrain|Gear',owner,re.I):
+                      print(f'\nLINE {i+1} OWNER: {owner}')
+                      for j in range(max(0,i-4),min(len(lines),i+6)):
+                          print(f'{j+1}: {lines[j]}')
           PY
