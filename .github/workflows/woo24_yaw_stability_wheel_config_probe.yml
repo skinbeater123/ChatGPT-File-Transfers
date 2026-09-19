@@ -1,4 +1,5 @@
 name: WoO24 yaw stability wheel config probe
+# refreshed after workflow registration
 
 on:
   push:
