@@ -1,0 +1,55 @@
+name: WoO24 helper 4FAB0 force semantics 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_helper_4fab0_force_semantics_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          python3 - <<'PY'
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; d=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          def off(v):return pe.get_offset_from_rva(v-B)
+          def bound(v):
+            for e in pe.DIRECTORY_ENTRY_EXCEPTION:
+              a=B+e.struct.BeginAddress;b=B+e.struct.EndAddress
+              if a<=v<b:return a,b
+          def f32(v):
+            try:return struct.unpack('<f',d[off(v):off(v)+4])[0]
+            except:return None
+          def st(v):
+            try:
+              x=d[off(v):off(v)+300].split(b'\0',1)[0]
+              if len(x)>2 and all(32<=q<127 or q in (9,10,13) for q in x):return x.decode()
+            except:pass
+          for target in [0x18004fab0,0x1800c10e0]:
+            a,b=bound(target); print('\n===',hex(target),hex(a),hex(b),'===')
+            for x in md.disasm(d[off(a):off(a)+(b-a)],a):
+              ann=[]
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                  v=x.address+x.size+op.mem.disp; ann.append(f'RIP={v:#x} f={f32(v)!r} s={st(v)!r}')
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:70s} {" | ".join(ann)}')
+          # exact source locations for stack locals involved at final ref-width torque-looking block
+          lo,hi=0x1800c3340,0x1800c517d
+          ins=list(md.disasm(d[off(lo):off(lo)+(hi-lo)],lo))
+          pats=['rsp + 0x78','rbp - 0x74','rbp - 0x40','rbp - 0x68','rbp - 0x64','rbp - 0x60']
+          for p in pats:
+            print('\n===',p,'===')
+            for i,x in enumerate(ins):
+              if p in x.op_str.lower():
+                for y in ins[max(0,i-10):min(len(ins),i+12)]:
+                  print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+                print()
+          PY
