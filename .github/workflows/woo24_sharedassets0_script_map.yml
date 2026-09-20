@@ -1,0 +1,47 @@
+name: WoO24 sharedassets0 script map
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sharedassets0_script_map.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Map global MonoScript pathIDs used by sharedassets0
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+          python3 - <<'PY' > out/script_map.txt
+          import UnityPy
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              name=getattr(v,'name',k)
+              if name.endswith('globalgamemanagers.assets') or k.endswith('globalgamemanagers.assets'):
+                  sf=v; break
+          if sf is None: raise SystemExit('globalgamemanagers.assets missing')
+          for obj in sorted(sf.objects.values(),key=lambda o:o.path_id):
+              if obj.type.name!='MonoScript': continue
+              try: d=obj.read()
+              except Exception: continue
+              print(f"{obj.path_id}\t{getattr(d,'m_Namespace','')}\t{getattr(d,'m_ClassName','')}\t{getattr(d,'m_AssemblyName','')}\t{getattr(d,'m_Name','')}")
+          PY
+          cat out/script_map.txt
+
+      - name: Upload map
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-sharedassets0-script-map
+          path: out/
+          retention-days: 1
