@@ -1,0 +1,36 @@
+name: Cleanup misplaced WoO24 ref_width outputs
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cleanup_misplaced_woo24_ref_width_20260921.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove misplaced DTC research outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf \
+            forensics/woo24_ref_width_native_trace_20260920 \
+            forensics/woo24_ref_width_registration_offset_20260920 \
+            forensics/woo24_ref_width_consumer_role_20260920 \
+            forensics/woo24_ref_width_final_consumers_20260920 \
+            forensics/woo24_ref_width_solver_f4770_20260920 \
+            forensics/woo24_ref_width_solver_f9830_20260920 \
+            forensics/woo24_ref_width_b8_translator_tail_20260920
+          rm -f .github/scripts/woo24_ref_width_native_trace.py
+          rm -f .github/workflows/woo24_ref_width_native_trace_20260920.yml
+          rm -f .github/workflows/cleanup_misplaced_woo24_ref_width_20260921.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Cleanup misplaced DTC WoO24 ref_width outputs" || exit 0
+          git push
