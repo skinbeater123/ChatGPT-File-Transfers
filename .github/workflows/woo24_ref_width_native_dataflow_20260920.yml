@@ -1,0 +1,179 @@
+name: WoO24 ref_width native dataflow 20260920
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_native_dataflow_20260920.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace ref_width through native PE
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf out phys_unpack
+          mkdir -p out phys_unpack
+          unzip -q phys.zip -d phys_unpack
+          python -m pip install --quiet pefile capstone
+          cat > /tmp/trace.py <<'PY'
+          import pefile, struct, re, json
+          from pathlib import Path
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_REG_RIP
+
+          DLL=Path('phys_unpack/physimpl.dll')
+          data=DLL.read_bytes()
+          pe=pefile.PE(str(DLL), fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          text_sec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          text_rva=text_sec.VirtualAddress
+          text_off=text_sec.PointerToRawData
+          text_size=text_sec.SizeOfRawData
+          text=data[text_off:text_off+text_size]
+          md=Cs(CS_ARCH_X86, CS_MODE_64); md.detail=True
+          ins=list(md.disasm(text, base+text_rva))
+          by_addr={i.address:i for i in ins}
+
+          def off_to_rva(off):
+              return pe.get_rva_from_offset(off)
+          def find_ascii(s):
+              pat=s.encode()+b'\0'; out=[]; p=0
+              while True:
+                  q=data.find(pat,p)
+                  if q<0: break
+                  try: out.append((q,off_to_rva(q),base+off_to_rva(q)))
+                  except: pass
+                  p=q+1
+              return out
+
+          # x64 exception/pdata gives reliable compiled function boundaries.
+          funcs=[]
+          try:
+              pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+              for e in pe.DIRECTORY_ENTRY_EXCEPTION:
+                  a=e.struct.BeginAddress; b=e.struct.EndAddress
+                  funcs.append((base+a,base+b,a,b))
+          except Exception as ex:
+              print('pdata parse failed',ex)
+          funcs.sort()
+          def fn_for(va):
+              lo,hi=0,len(funcs)
+              while lo<hi:
+                  m=(lo+hi)//2
+                  if funcs[m][0] <= va: lo=m+1
+                  else: hi=m
+              if lo:
+                  f=funcs[lo-1]
+                  if f[0]<=va<f[1]: return f
+              return None
+          def fmt(i):
+              return f'{i.address:016X}  {i.mnemonic:8s} {i.op_str}'
+          def dis_fn(f):
+              if not f:return []
+              return [fmt(i) for i in ins if f[0]<=i.address<f[1]]
+          # Build direct call edges and RIP-relative references.
+          calls={}
+          riprefs={}
+          for i in ins:
+              f=fn_for(i.address)
+              if not f: continue
+              fs=f[0]
+              if i.mnemonic=='call' and i.operands and i.operands[0].type==X86_OP_IMM:
+                  calls.setdefault(fs,set()).add(i.operands[0].imm)
+              for op in i.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      target=i.address+i.size+op.mem.disp
+                      riprefs.setdefault(target,[]).append(i.address)
+
+          targets=['ref_width','frict_load1','frict_k1','frict_load2','frict_k2',
+                   'stiff_load1','stiff_c1','stiff_load2','stiff_c2',
+                   'camber_stiff','camber_peak','camber_grip','long_stiff','long_frict',
+                   'grip_fade_start','grip_fade_stop','grip_fade',
+                   'magic_b','magic_c','magic_d','magic_e',
+                   'VFFrontAxle','VFRearAxle','VFWheel']
+          report=[]
+          interesting_fns=set()
+          for s in targets:
+              hits=find_ascii(s)
+              report.append(f'\n===== STRING {s} =====')
+              for off,rva,va in hits:
+                  report.append(f'file_off=0x{off:X} rva=0x{rva:X} va=0x{va:X}')
+                  xs=riprefs.get(va,[])
+                  report.append('xrefs='+','.join(f'0x{x:X}' for x in xs) if xs else 'xrefs=<none>')
+                  for x in xs:
+                      f=fn_for(x)
+                      if f:
+                          interesting_fns.add(f[0])
+                          report.append(f'  fn 0x{f[0]:X}-0x{f[1]:X} xref@0x{x:X}')
+          Path('out/string_xrefs.txt').write_text('\n'.join(report))
+
+          # Dump complete functions that reference parameter-name strings.
+          with open('out/schema_xref_functions.txt','w') as o:
+              for fs in sorted(interesting_fns):
+                  f=fn_for(fs)
+                  o.write(f'\n===== FUNCTION 0x{f[0]:X}-0x{f[1]:X} RVA 0x{f[2]:X} =====\n')
+                  o.write('\n'.join(dis_fn(f))+'\n')
+
+          # Caller/callee neighborhood for interesting funcs.
+          rev={}
+          for a,bs in calls.items():
+              for b in bs: rev.setdefault(b,set()).add(a)
+          with open('out/call_neighborhood.txt','w') as o:
+              for fs in sorted(interesting_fns):
+                  o.write(f'\nFN 0x{fs:X}\n')
+                  o.write(' callers: '+', '.join(f'0x{x:X}' for x in sorted(rev.get(fs,())))+'\n')
+                  o.write(' callees: '+', '.join(f'0x{x:X}' for x in sorted(calls.get(fs,())))+'\n')
+
+          # Search .rdata/data around each string for pointers and nearby descriptor-like material.
+          with open('out/ref_width_memory_context.txt','w') as o:
+              for off,rva,va in find_ascii('ref_width'):
+                  o.write(f'REF_WIDTH off=0x{off:X} rva=0x{rva:X} va=0x{va:X}\n')
+                  lo=max(0,off-512); hi=min(len(data),off+1024)
+                  for p in range(lo,hi,16):
+                      chunk=data[p:p+16]
+                      asc=''.join(chr(c) if 32<=c<127 else '.' for c in chunk)
+                      o.write(f'{p:08X}  {chunk.hex(" "):47s}  {asc}\n')
+                  # find absolute little-endian pointer references to string VA
+                  needle=struct.pack('<Q',va)
+                  p=0
+                  while True:
+                      q=data.find(needle,p)
+                      if q<0: break
+                      try: rr=off_to_rva(q)
+                      except: rr=-1
+                      o.write(f'ABS_PTR file_off=0x{q:X} rva=0x{rr:X} va=0x{base+rr:X}\n')
+                      p=q+1
+
+          # Export and source/string inventory.
+          pe.parse_data_directories()
+          with open('out/exports.txt','w') as o:
+              if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+                  for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                      o.write(f'0x{base+sym.address:X} {sym.name!r}\n')
+          strs=[]
+          for m in re.finditer(rb'[ -~]{5,}',data):
+              s=m.group().decode('ascii','ignore')
+              if re.search(r'axle|wheel|tire|tyre|frict|stiff|slip|camber|grip|force|contact|D:\\\\N17',s,re.I):
+                  strs.append((m.start(),s))
+          with open('out/relevant_strings.txt','w') as o:
+              for p,s in strs: o.write(f'0x{p:X} {s}\n')
+
+          print('functions',len(funcs),'instructions',len(ins),'ref_width',find_ascii('ref_width'))
+          PY
+          python /tmp/trace.py
+          cat out/string_xrefs.txt
+          echo '--- REF FUNCTION DUMPS ---'
+          cat out/schema_xref_functions.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-native-dataflow
+          path: out/
+          retention-days: 3
