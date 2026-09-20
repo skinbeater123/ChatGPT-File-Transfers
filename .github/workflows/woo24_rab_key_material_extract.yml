@@ -1,0 +1,110 @@
+name: WoO24 RAB key material extract
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rab_key_material_extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract key material from GameAssembly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf woo out
+          mkdir -p woo out
+          unzip -q WOO24.zip -d woo
+          python3 -m pip install --quiet pefile capstone
+          python3 - <<'PY' > out/key_trace.txt
+          import pefile, struct, re
+          from capstone import *
+          from capstone.x86 import *
+
+          path='woo/GameAssembly.dll'
+          data=open(path,'rb').read()
+          pe=pefile.PE(path)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          size=pe.OPTIONAL_HEADER.SizeOfImage
+
+          def va_to_off(va):
+              return pe.get_offset_from_rva(va-base)
+
+          def raw_at_va(va,n=128):
+              try:
+                  off=va_to_off(va)
+                  return data[off:off+n]
+              except Exception:
+                  return b''
+
+          md=Cs(CS_ARCH_X86,CS_MODE_64)
+          md.detail=True
+
+          roots={
+            'DecryptAssetBundleData':0x180701AC0,
+            'DecryptData':0x180701C20,
+            'GetAesKeyFromBytes':0x180701F30,
+            'GetFull':0x180701FF0,
+            'PerformCryptography':0x180702210,
+            'cctor':0x180702420,
+          }
+
+          def disasm_func(name,va,maxlen=1600):
+              off=va_to_off(va)
+              insns=list(md.disasm(data[off:off+maxlen],va))
+              print('\n'+'='*140)
+              print(name,hex(va),'off',hex(off))
+              print('='*140)
+              count=0
+              for ins in insns:
+                  extras=[]
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          raw=raw_at_va(tgt,96)
+                          if raw:
+                              ascii=''.join(chr(x) if 32<=x<127 else '.' for x in raw[:64])
+                              extras.append(f'RIP={hex(tgt)} RAW={raw[:64].hex()} ASCII={ascii}')
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      extras.append('CALL='+hex(ins.operands[0].imm))
+                  if ins.mnemonic.startswith('j') and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      extras.append('JMP='+hex(ins.operands[0].imm))
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} ' + ' | '.join(extras))
+                  count+=1
+                  # stop on first ret after 24 bytes
+                  if ins.mnemonic.startswith('ret') and ins.address-va>24:
+                      break
+                  if count>500:
+                      break
+
+          for n,v in roots.items():
+              disasm_func(n,v)
+
+          # Dump PE initialized data ranges referenced near cctor/GetFull manually from RIP targets.
+          print('\n=== CCTOR RIP TARGET CANDIDATES ===')
+          for n in ['cctor','GetFull']:
+              va=roots[n]
+              off=va_to_off(va)
+              for ins in md.disasm(data[off:off+1400],va):
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          raw=raw_at_va(tgt,256)
+                          print(n,hex(ins.address),hex(tgt),raw[:256].hex())
+                  if ins.mnemonic.startswith('ret') and ins.address-va>24:
+                      break
+          PY
+          cat out/key_trace.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-rab-key-material
+          path: out/key_trace.txt
+          retention-days: 1
