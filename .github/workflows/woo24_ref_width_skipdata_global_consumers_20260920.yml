@@ -1,0 +1,93 @@
+name: WoO24 ref_width skipdata global consumers 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_skipdata_global_consumers_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_skip
+          mkdir -p phys_unpack out_skip
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_skip/summary.txt
+          import pefile, bisect
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              code=raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData]
+              ins.extend(md.disasm(code,base+s.VirtualAddress))
+          print('decoded',len(ins),'first',hex(ins[0].address),'last',hex(ins[-1].address))
+          front=0x180273720; rear=0x180273660
+          ranges=[('rear',rear,rear+0xc0),('front',front,front+0xc0)]
+          refs=[]
+          for idx,i in enumerate(ins):
+            try: ops=i.operands
+            except: continue
+            for op in ops:
+              t=None
+              if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:t=i.address+i.size+op.mem.disp
+              elif op.type==X86_OP_IMM:t=op.imm
+              if t is None:continue
+              for n,lo,hi in ranges:
+                if lo<=t<hi: refs.append((idx,i.address,t,n,t-lo,i.mnemonic,i.op_str))
+          print('range refs',len(refs))
+          for x in refs:print(hex(x[1]),x[3],hex(x[4]),x[5],x[6])
+          with open('out_skip/range_refs_context.txt','w') as o:
+            for idx,a,t,n,off,m,opstr in refs:
+              o.write(f'\n===== {n}+{off:#x} target={t:#x} xref={a:#x} {m} {opstr} =====\n')
+              for q in ins[max(0,idx-120):min(len(ins),idx+220)]:
+                o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          # exact +b8 references
+          exact=[x for x in refs if x[4]==0xb8]
+          print('exact+b8',len(exact))
+          # Find full compiled function bounds via .pdata for each ref.
+          funcs=[]
+          try:
+            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+            for e in pe.DIRECTORY_ENTRY_EXCEPTION:
+              funcs.append((base+e.struct.BeginAddress,base+e.struct.EndAddress))
+            funcs.sort()
+          except Exception as e: print(e)
+          def fn(a):
+            k=bisect.bisect_right(funcs,(a,10**30))-1
+            if k>=0 and funcs[k][0]<=a<funcs[k][1]:return funcs[k]
+          with open('out_skip/ref_functions.txt','w') as o:
+            seen=set()
+            for idx,a,t,n,off,m,opstr in refs:
+              f=fn(a)
+              if not f or f in seen:continue
+              seen.add(f)
+              o.write(f'\n===== FUNCTION {f[0]:#x}-{f[1]:#x} =====\n')
+              for q in ins:
+                if f[0]<=q.address<f[1]:o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-skipdata-global-consumers
+          path: out_skip/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_ref_width_skipdata_global_consumers_20260920
+          mkdir -p forensics_output/woo24_ref_width_skipdata_global_consumers_20260920
+          cp out_skip/* forensics_output/woo24_ref_width_skipdata_global_consumers_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_ref_width_skipdata_global_consumers_20260920
+          git commit -m "forensics: publish WoO24 skipdata axle global consumers" || exit 0
+          git push
