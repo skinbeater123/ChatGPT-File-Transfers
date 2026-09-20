@@ -1,0 +1,82 @@
+name: WoO24 GameYear resource-prefix trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_gameyear_resource_prefix_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve RVA 0x41FF70 and GameYear paths
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/result.txt
+          from pathlib import Path
+          import re,json,pefile,struct
+          from capstone import *
+          from capstone.x86 import *
+
+          dump=Path('out/dump/dump.cs').read_text(errors='ignore')
+          print('=== RVA DECLARATION ===')
+          for pat in ['RVA: 0x41FF70','0x41FF70','GameYearManager']:
+              print('\nPAT',pat)
+              for m in list(re.finditer(re.escape(pat),dump,re.I))[:30]:
+                  print(dump[max(0,m.start()-1600):min(len(dump),m.end()+5000)])
+
+          print('\n=== GAMEYEAR-RELATED STRING LITERALS ===')
+          arr=json.loads(Path('out/dump/stringliteral.json').read_text())
+          for x in arr:
+              s=x.get('value','')
+              if any(t in s.lower() for t in ['2023','2024','future','present','gameyear','season','mgiresources','leagueinfowarehouse']):
+                  print(json.dumps(x,ensure_ascii=False))
+
+          pe=pefile.PE('woo/GameAssembly.dll')
+          data=Path('woo/GameAssembly.dll').read_bytes()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+          lit={}
+          for x in arr:
+              try: lit[base+int(x['address'],16)]=x['value']
+              except: pass
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          start=0x18041FF70
+          print('\n=== DISASM 0x41FF70 ===')
+          for ins in md.disasm(data[off(start):off(start)+0x500],start):
+              ex=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      tgt=ins.address+ins.size+op.mem.disp
+                      ex.append('RIP='+hex(tgt))
+                      if tgt in lit: ex.append('LITERAL='+repr(lit[tgt]))
+                      try:
+                          ptr=struct.unpack('<Q',data[off(tgt):off(tgt)+8])[0]
+                          if ptr in lit: ex.append('PTR_LITERAL='+repr(lit[ptr]))
+                      except: pass
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} '+' | '.join(ex))
+              if ins.mnemonic.startswith('ret') and ins.address-start>10: break
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-gameyear-resource-prefix
+          path: out/result.txt
+          retention-days: 1
