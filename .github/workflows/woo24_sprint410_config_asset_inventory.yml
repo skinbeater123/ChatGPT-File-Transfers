@@ -1,0 +1,41 @@
+name: WoO24 Sprint410 config asset inventory
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sprint410_config_asset_inventory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inventory supplied WoO24 archives for physics/config assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          {
+            echo "=== WOO24.zip ==="
+            unzip -l WOO24.zip || true
+            echo
+            echo "=== sprintcar 2 .zip ==="
+            unzip -l "sprintcar 2 .zip" || true
+            echo
+            echo "=== Global.pre strings (physics/config) ==="
+            strings -a Global.pre | grep -Ei 'PhysWheel|PhysAxle|sprint.?410|wheel|axle|stiff|grip|tire|tyre|stagger' | head -4000 || true
+          } > out/inventory.txt
+          sed -n '1,12000p' out/inventory.txt
+
+      - name: Upload inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-sprint410-config-asset-inventory
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
