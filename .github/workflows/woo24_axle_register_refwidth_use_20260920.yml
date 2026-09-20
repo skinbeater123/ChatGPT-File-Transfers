@@ -1,0 +1,90 @@
+name: WoO24 axle register refwidth use 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_register_refwidth_use_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_reg
+          mkdir -p phys_unpack out_reg
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_reg/summary.txt
+          import pefile,bisect
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_REG,X86_REG_RIP
+          p='phys_unpack/physimpl.dll';raw=open(p,'rb').read();pe=pefile.PE(p);base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          funcs=[]
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          for e in pe.DIRECTORY_ENTRY_EXCEPTION:funcs.append((base+e.struct.BeginAddress,base+e.struct.EndAddress))
+          funcs.sort()
+          def fn(a):
+            k=bisect.bisect_right(funcs,(a,2**64-1))-1
+            return funcs[k] if k>=0 and funcs[k][0]<=a<funcs[k][1] else None
+          hits=[]
+          for idx,i in enumerate(ins):
+            if i.mnemonic!='lea':continue
+            try:ops=i.operands
+            except:continue
+            if len(ops)<2 or ops[0].type!=X86_OP_REG or ops[1].type!=X86_OP_MEM:continue
+            m=ops[1].mem
+            if m.base in (0,X86_REG_RIP) or m.index!=0 or m.disp not in (0x18c,0x250):continue
+            dst=ops[0].reg; f=fn(i.address)
+            if not f:continue
+            uses=[]
+            for j in range(idx+1,min(len(ins),idx+180)):
+              q=ins[j]
+              if q.address>=f[1]:break
+              try:qops=q.operands
+              except:continue
+              # stop when dst register is explicitly overwritten as operand 0 reg (approx)
+              for qo in qops:
+                if qo.type==X86_OP_MEM and qo.mem.base==dst and qo.mem.disp==0xc0:
+                  uses.append((q.address,q.mnemonic,q.op_str))
+              if qops and qops[0].type==X86_OP_REG and qops[0].reg==dst and q.mnemonic not in ('cmp','test'):
+                # retain lea-derived reg for stores through it only; direct register destination overwrites
+                if not (q.mnemonic in ('add','sub') and False): break
+            if uses:hits.append((i.address,m.disp,dst,f,uses))
+          print('provenance hits',len(hits))
+          for h in hits:print(hex(h[0]),hex(h[1]),tuple(hex(x) for x in h[3]),h[4])
+          with open('out_reg/functions.txt','w') as o:
+            seen=set()
+            for h in hits:
+              f=h[3]
+              if f in seen:continue
+              seen.add(f)
+              o.write(f'\n===== fn {f[0]:#x}-{f[1]:#x} hits={h} =====\n')
+              for q in ins:
+                if f[0]<=q.address<f[1]:o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-register-refwidth-use
+          path: out_reg/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_axle_register_refwidth_use_20260920
+          mkdir -p forensics_output/woo24_axle_register_refwidth_use_20260920
+          cp out_reg/* forensics_output/woo24_axle_register_refwidth_use_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_axle_register_refwidth_use_20260920
+          git commit -m "forensics: publish WoO24 axle register refwidth use" || exit 0
+          git push
