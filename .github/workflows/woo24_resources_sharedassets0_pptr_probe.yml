@@ -1,0 +1,175 @@
+name: WoO24 resources sharedassets0 PPtr probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_sharedassets0_pptr_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace Sprint410 object graph into sharedassets0
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/sharedassets0_pptrs.txt
+          import json, re
+          import UnityPy
+
+          env = UnityPy.load('unpack')
+          sf = None
+          for k, v in env.files.items():
+              name = getattr(v, 'name', k)
+              if name.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf = v
+                  break
+          if sf is None:
+              raise SystemExit('resources.assets not loaded')
+
+          objs = sf.objects.values() if hasattr(sf.objects, 'values') else sf.objects
+          by_id = {o.path_id: o for o in objs}
+
+          def script_name(obj, data=None):
+              if obj.type.name != 'MonoBehaviour':
+                  return ''
+              try:
+                  d = data if data is not None else obj.read()
+                  sc = d.m_Script.read()
+                  return getattr(sc, 'm_ClassName', '') or getattr(sc, 'm_Name', '') or ''
+              except Exception:
+                  return ''
+
+          def obj_name(obj, data=None):
+              try:
+                  d = data if data is not None else obj.read()
+                  return getattr(d, 'm_Name', '') or ''
+              except Exception:
+                  return ''
+
+          def collect_pptrs(x, path=''):
+              out = []
+              if isinstance(x, dict):
+                  # UnityPy typetrees encode PPtrs as {m_FileID, m_PathID}.
+                  if 'm_FileID' in x and 'm_PathID' in x:
+                      try:
+                          out.append((path or '<root>', int(x['m_FileID']), int(x['m_PathID'])))
+                      except Exception:
+                          pass
+                  for k, v in x.items():
+                      out.extend(collect_pptrs(v, f'{path}.{k}' if path else str(k)))
+              elif isinstance(x, list):
+                  for i, v in enumerate(x):
+                      out.extend(collect_pptrs(v, f'{path}[{i}]'))
+              return out
+
+          # First identify all named/scripted Sprint410 objects and setup-resource objects.
+          seeds = []
+          keywords = re.compile(r'(Sprint410|Wingless.*Sprint410|PSI_|RideHeight_|Spring_|Stagger_|CarShellForTrackProjects|CarWheelForTrackProjects|AudioLocator_Sprint410)', re.I)
+          for o in by_id.values():
+              try:
+                  d = o.read()
+              except Exception:
+                  continue
+              n = obj_name(o, d)
+              s = script_name(o, d)
+              if keywords.search(n) or keywords.search(s):
+                  seeds.append(o)
+
+          print('SEED_COUNT', len(seeds))
+          print('EXTERNAL_2', 'sharedassets0.assets')
+
+          # Traverse local component/object PPtrs from every seed to depth 3.
+          visited = set()
+          queue = [(o, 0, f'seed:{o.path_id}') for o in seeds]
+          relevant_records = []
+          while queue:
+              o, depth, via = queue.pop(0)
+              if o.path_id in visited:
+                  continue
+              visited.add(o.path_id)
+              try:
+                  d = o.read()
+                  tree = o.read_typetree()
+              except Exception:
+                  continue
+              n = obj_name(o, d)
+              s = script_name(o, d)
+              pptrs = collect_pptrs(tree)
+              ext2 = [(p, fid, pid) for p, fid, pid in pptrs if fid == 2 and pid]
+              if ext2:
+                  relevant_records.append((o.path_id, o.type.name, n, s, via, ext2))
+              if depth < 3:
+                  for p, fid, pid in pptrs:
+                      if fid == 0 and pid in by_id and pid not in visited:
+                          queue.append((by_id[pid], depth + 1, f'{via}->{o.path_id}:{p}'))
+
+          print('\nSPRINT410 GRAPH -> sharedassets0 PPtrs')
+          for rec in relevant_records:
+              oid, typ, n, s, via, refs = rec
+              print(f'OBJ path_id={oid} type={typ} name={n!r} script={s!r} via={via}')
+              for p, fid, pid in refs:
+                  print(f'  {p} -> fileID={fid} pathID={pid}')
+
+          # Global MonoBehaviour pass: print fileID2 refs for physics/vehicle/setup-ish scripts
+          # or Sprint410-named instances. This catches assets not reachable from the named GO graph.
+          physish = re.compile(r'(Phys|Physics|Chassis|Axle|Wheel|Susp|Vehicle|Car|Setup|Stagger|RideHeight|Spring|Tire|Tyre)', re.I)
+          global_hits = []
+          for o in by_id.values():
+              if o.type.name != 'MonoBehaviour':
+                  continue
+              try:
+                  d = o.read()
+                  tree = o.read_typetree()
+              except Exception:
+                  continue
+              n = obj_name(o, d)
+              s = script_name(o, d)
+              if not (keywords.search(n) or physish.search(s)):
+                  continue
+              ext2 = [(p, fid, pid) for p, fid, pid in collect_pptrs(tree) if fid == 2 and pid]
+              if ext2:
+                  global_hits.append((o.path_id, n, s, ext2))
+
+          print('\nGLOBAL RELEVANT MONOBEHAVIOURS -> sharedassets0 PPtrs')
+          for oid, n, s, refs in global_hits:
+              print(f'MB path_id={oid} name={n!r} script={s!r}')
+              for p, fid, pid in refs:
+                  print(f'  {p} -> fileID={fid} pathID={pid}')
+
+          # Summarise unique external targets and their referring contexts.
+          target_ctx = {}
+          for oid, typ, n, s, via, refs in relevant_records:
+              for p, fid, pid in refs:
+                  target_ctx.setdefault(pid, set()).add(f'graph {oid} {typ} {n!r} {s!r} {p}')
+          for oid, n, s, refs in global_hits:
+              for p, fid, pid in refs:
+                  target_ctx.setdefault(pid, set()).add(f'globalMB {oid} {n!r} {s!r} {p}')
+
+          print('\nUNIQUE sharedassets0 TARGET PATHIDS')
+          for pid in sorted(target_ctx):
+              print('pathID', pid)
+              for ctx in sorted(target_ctx[pid]):
+                  print(' ', ctx)
+          print('UNIQUE_TARGET_COUNT', len(target_ctx))
+          PY
+
+          cat out/sharedassets0_pptrs.txt
+
+      - name: Upload derived results
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-sharedassets0-pptr-probe
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
