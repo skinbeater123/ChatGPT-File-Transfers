@@ -1,0 +1,130 @@
+name: WoO24 proven axle ref_width consumers 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_proven_axle_refwidth_consumers_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/refwidth_consumers.txt
+          import pefile,struct,bisect,collections
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; raw=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          funcs=sorted((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          def bound(v):
+            i=bisect.bisect_right(starts,v)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=v<funcs[i][1] else None
+          def off(v): return pe.get_offset_from_rva(v-B)
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          ins=list(md.disasm(raw[text.PointerToRawData:text.PointerToRawData+text.SizeOfRawData],B+text.VirtualAddress))
+          byf=collections.defaultdict(list)
+          for x in ins:
+            f=bound(x.address)
+            if f: byf[f].append(x)
+
+          fields={0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+                  0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+                  0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+                  0xa0:'camber_stiff',0xa4:'camber_peak',0xa8:'camber_grip',
+                  0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start',
+                  0xb8:'fade_stop',0xbc:'fade',0xc0:'ref_width'}
+
+          print('=== POINTER-LAYOUT CANDIDATES: same base register, +C0 plus >=4 known axle offsets ===')
+          candidates=[]
+          for f,ii in byf.items():
+            bases=collections.defaultdict(list)
+            for x in ii:
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base and op.mem.index==0 and op.mem.disp in fields:
+                  reg=x.reg_name(op.mem.base)
+                  bases[reg].append((op.mem.disp,x))
+            for reg,hits in bases.items():
+              offs={h[0] for h in hits}
+              if 0xc0 in offs and len(offs)>=4:
+                candidates.append((f,reg,offs,hits))
+          for f,reg,offs,hits in candidates:
+            print(f'\nFUNC {f[0]:#x}-{f[1]:#x} size={f[1]-f[0]} base={reg} fields={[fields[o] for o in sorted(offs)]}')
+            for disp,x in hits:
+              print(f'  {x.address:#x}: {x.mnemonic:8s} {x.op_str} ; {fields[disp]}')
+            # dump around each C0 hit
+            ii=byf[f]
+            for j,x in enumerate(ii):
+              if any(op.type==X86_OP_MEM and op.mem.base and x.reg_name(op.mem.base)==reg and op.mem.disp==0xc0 for op in x.operands):
+                print('  -- C0 context --')
+                for y in ii[max(0,j-18):min(len(ii),j+32)]:
+                  print(f'    {y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+
+          print('\n=== EMBEDDED FRONT/REAR candidates on same base register ===')
+          # front base +18c => fields 1fc..24c; rear base +250 => 2c0..310
+          for label,baseoff in [('FRONT',0x18c),('REAR',0x250)]:
+            target={baseoff+k:(k,fields[k]) for k in fields}
+            for f,ii in byf.items():
+              bases=collections.defaultdict(list)
+              for x in ii:
+                for op in x.operands:
+                  if op.type==X86_OP_MEM and op.mem.base and op.mem.index==0 and op.mem.disp in target:
+                    reg=x.reg_name(op.mem.base); bases[reg].append((op.mem.disp,x))
+              for reg,hits in bases.items():
+                offs={d for d,x in hits}
+                if baseoff+0xc0 in offs and len(offs)>=4:
+                  print(f'\n{label} FUNC {f[0]:#x}-{f[1]:#x} base={reg} members={[target[o][1] for o in sorted(offs)]}')
+                  for d,x in hits:
+                    print(f'  {x.address:#x}: {x.mnemonic:8s} {x.op_str} ; {target[d][1]}')
+
+          print('\n=== ALL +C0 memory operands grouped by function ===')
+          for f,ii in byf.items():
+            hits=[]
+            for x in ii:
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.disp==0xc0:
+                  hits.append(x); break
+            if hits:
+              print(f'FUNC {f[0]:#x}-{f[1]:#x} size={f[1]-f[0]} count={len(hits)}')
+              for x in hits: print(f'  {x.address:#x}: {x.mnemonic} {x.op_str}')
+
+          target=0x1800c3340
+          print('\n=== EXACT POINTER OCCURRENCES FOR wheel.cpp 0x1800C3340 ===')
+          needle=struct.pack('<Q',target)
+          pos=0
+          while True:
+            p=raw.find(needle,pos)
+            if p<0: break
+            sec=None; va=None
+            for s in pe.sections:
+              if s.PointerToRawData<=p<s.PointerToRawData+s.SizeOfRawData:
+                va=B+s.VirtualAddress+(p-s.PointerToRawData); sec=s.Name.rstrip(b'\0').decode('ascii','ignore'); break
+            print('fileoff',hex(p),'va',hex(va) if va else None,'section',sec)
+            if va:
+              # nearby qwords
+              o=p
+              for q in range(-6,10):
+                z=o+q*8
+                if 0<=z<=len(raw)-8:
+                  val=struct.unpack('<Q',raw[z:z+8])[0]
+                  print(f'  [{q:+d}] file={z:#x} val={val:#x} func={bound(val)}')
+            pos=p+1
+
+          print('\n=== LEA of embedded axle bases +18C/+250 ===')
+          for x in ins:
+            for op in x.operands:
+              if op.type==X86_OP_MEM and op.mem.disp in (0x18c,0x250):
+                print(f'{x.address:#x} func={bound(x.address)} {x.mnemonic} {x.op_str}')
+          PY
+          cat out/refwidth_consumers.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-proven-axle-refwidth-consumers
+          path: out/refwidth_consumers.txt
+          retention-days: 3
