@@ -41,6 +41,7 @@ jobs:
           D=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -name Il2CppDumper.dll | head -1)
           cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$D")/config.json"
           dotnet "$D" woo24_input/GameAssembly.dll woo24_input/global-metadata.dat "$PWD/woo24_dump" >/dev/null
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
 
           python3 - <<'PY' > woo24_out/rear_omega_probe.txt
           import re,bisect
