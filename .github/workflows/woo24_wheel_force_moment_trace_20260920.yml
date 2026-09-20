@@ -1,0 +1,62 @@
+name: WoO24 wheel force moment trace 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_wheel_force_moment_trace_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/moment_trace.txt
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; d=Path(fn).read_bytes(); pe=pefile.PE(fn); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          def off(va):return pe.get_offset_from_rva(va-base)
+          def f32(va):
+            try:return struct.unpack('<f',d[off(va):off(va)+4])[0]
+            except:return None
+          def cstr(va):
+            try:
+              b=d[off(va):off(va)+300].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=x<127 or x in (9,10,13) for x in b):return b.decode('ascii','replace')
+            except:pass
+          lo,hi=0x1800c3340,0x1800c517d
+          ins=list(md.disasm(d[off(lo):off(lo)+(hi-lo)],lo))
+          print('=== ALL CALLS ===')
+          for x in ins:
+            if x.mnemonic=='call':
+              targ=hex(x.operands[0].imm) if x.operands and x.operands[0].type==X86_OP_IMM else x.op_str
+              print(hex(x.address),targ)
+          print('\n=== FULL 0x4A00-0x4F90 ===')
+          for x in ins:
+            if 0x1800c4a00<=x.address<=0x1800c4f90:
+              ann=[]
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                  va=x.address+x.size+op.mem.disp
+                  ann.append(f'RIP={va:#x} f32={f32(va)!r} str={cstr(va)!r}')
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:72s} {" | ".join(ann)}')
+          print('\n=== RBP LOCAL READ/WRITE INDEX ===')
+          for x in ins:
+            if 0x1800c3a00<=x.address<=0x1800c4f90:
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RBP and op.mem.disp in (-0x74,-0x70,-0x6c,-0x68,-0x64,-0x60,-0x58,-0x50,-0x4c,-0x48,0x78,0x7c,0x80,0x90,0xb0):
+                  print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str}')
+                  break
+          PY
+          cat out/moment_trace.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-wheel-force-moment-trace
+          path: out/moment_trace.txt
+          retention-days: 3
