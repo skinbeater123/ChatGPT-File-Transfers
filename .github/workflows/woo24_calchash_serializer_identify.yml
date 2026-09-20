@@ -1,0 +1,56 @@
+name: WoO24 CalcHash serializer identify
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_calchash_serializer_identify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  identify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Identify CalcHash serializer and compute candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/result.txt
+          from pathlib import Path
+          import re,hashlib
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+          rvas=['0xF56B30','0xF5C9F0','0x333AC0','0x32C600','0x32C5E0','0xE54BF0','0xE29DB0']
+          for rva in rvas:
+              print('\n'+'='*120)
+              print('RVA',rva)
+              print('='*120)
+              for m in list(re.finditer(r'RVA:\s*'+re.escape(rva),txt,re.I))[:5]:
+                  # show class namespace from prior namespace and enough context
+                  st=txt.rfind('// Namespace:',0,m.start())
+                  if st<0: st=max(0,m.start()-3000)
+                  en=txt.find('// Namespace:',m.end()+1)
+                  if en<0 or en-st>18000: en=min(len(txt),st+18000)
+                  print(txt[st:en])
+          s='Assets/MGI/Data/GameData/MGIResources'
+          print('\nPLAIN_UTF8_MD5',hashlib.md5(s.encode()).hexdigest().upper())
+          print('PLAIN_UTF16LE_MD5',hashlib.md5(s.encode('utf-16le')).hexdigest().upper())
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-calchash-serializer-identify
+          path: out/result.txt
+          retention-days: 1
