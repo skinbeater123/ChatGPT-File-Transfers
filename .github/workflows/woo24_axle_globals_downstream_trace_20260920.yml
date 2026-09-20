@@ -1,0 +1,72 @@
+name: WoO24 axle globals downstream trace 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_globals_downstream_trace_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_axdown
+          mkdir -p phys_unpack out_axdown
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_axdown/summary.txt
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          lo=base+0x3cf00; hi=base+0x3d300
+          with open('out_axdown/region_3cf00_3d300.txt','w') as o:
+            for i in ins:
+              if lo<=i.address<hi:o.write(f'{i.address:#018x}: {i.mnemonic:8s} {i.op_str}\n')
+          # export context
+          ex=[]
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+            for e in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+              if e.name: ex.append((base+e.address,e.name.decode(errors='ignore')))
+          ex.sort()
+          for a,n in ex:
+            if lo-0x1000<=a<hi+0x1000: print(hex(a),n)
+          # xrefs to addresses/cells of interest and to global base RVAs encoded as immediates
+          targets={0x18003d104:'front_rva_cell',0x18003d02c:'rear_rva_cell',0x180273720:'front_global',0x180273660:'rear_global'}
+          with open('out_axdown/target_xrefs.txt','w') as o:
+            for idx,i in enumerate(ins):
+              for op in i.operands:
+                t=None
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:t=i.address+i.size+op.mem.disp
+                elif op.type==X86_OP_IMM:t=op.imm
+                if t in targets:
+                  o.write(f'\n=== {targets[t]} target={t:#x} xref={i.address:#x} ===\n')
+                  for q in ins[max(0,idx-80):idx+160]:
+                    o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-globals-downstream
+          path: out_axdown/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_axle_globals_downstream_20260920
+          mkdir -p forensics_output/woo24_axle_globals_downstream_20260920
+          cp out_axdown/* forensics_output/woo24_axle_globals_downstream_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_axle_globals_downstream_20260920
+          git commit -m "forensics: publish WoO24 axle globals downstream trace" || exit 0
+          git push
