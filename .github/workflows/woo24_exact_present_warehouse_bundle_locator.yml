@@ -1,0 +1,115 @@
+name: WoO24 exact present warehouse bundle locator
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_exact_present_warehouse_bundle_locator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  locate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Resolve present GameData path and MGIResources bundle mapping
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/result.txt
+          from pathlib import Path
+          import json,re,pefile,struct
+          from capstone import *
+          from capstone.x86 import *
+
+          dump=Path('out/dump/dump.cs').read_text(errors='ignore')
+          arr=json.loads(Path('out/dump/stringliteral.json').read_text())
+          pe=pefile.PE('woo/GameAssembly.dll')
+          data=Path('woo/GameAssembly.dll').read_bytes()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          end=base+pe.OPTIONAL_HEADER.SizeOfImage
+          def off(va): return pe.get_offset_from_rva(va-base)
+          lit={}
+          for x in arr:
+              try: lit[base+int(x['address'],16)]=x['value']
+              except: pass
+
+          # Method map from dump.cs declarations
+          methods={}
+          for m in re.finditer(r'// RVA: 0x([0-9A-Fa-f]+)[^\n]*\n\s*(?:public|private|protected|internal)[^\n]*?\s([\w<>.]+)\([^\n]*',dump):
+              va=base+int(m.group(1),16)
+              methods[va]=m.group(2)
+
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+
+          def extras(ins):
+              ex=[]
+              if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                  tgt=ins.operands[0].imm
+                  ex.append('CALL='+hex(tgt)+' '+str(methods.get(tgt,'')))
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      tgt=ins.address+ins.size+op.mem.disp
+                      ex.append('RIP='+hex(tgt))
+                      if tgt in lit: ex.append('LITERAL='+repr(lit[tgt]))
+                      try:
+                          oo=off(tgt)
+                          ptr=struct.unpack('<Q',data[oo:oo+8])[0]
+                          if ptr in lit: ex.append('PTR_LITERAL='+repr(lit[ptr]))
+                      except: pass
+              return ' | '.join(ex)
+
+          def dis(name,start,size,stopret=True):
+              print('\n'+'='*150)
+              print(name,hex(start),hex(start+size),methods.get(start,''))
+              print('='*150)
+              for ins in md.disasm(data[off(start):off(start)+size],start):
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:60s} {extras(ins)}')
+                  if stopret and ins.mnemonic.startswith('ret') and ins.address-start>10:
+                      break
+
+          dis('GameYearManager.get_year_string',0x1804207B0,0x300)
+          dis('GameYearManager.get_gamedata_path',0x180420660,0x350)
+          dis('GameYearManager.GetYearSubdir',0x1804201E0,0x180)
+          dis('GameYearManager.GetYearResourceSuffix',0x1804200F0,0x180)
+
+          # MGIResources.load_async and key direct callees around the path split.
+          dis('MGIResources.load_async<object>',0x18097C060,0x190,False)
+
+          # First-level direct calls in load_async
+          oo=off(0x18097C060)
+          direct=[]
+          for ins in md.disasm(data[oo:oo+0x190],0x18097C060):
+              if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                  t=ins.operands[0].imm
+                  if base <= t < end and t not in direct:
+                      direct.append(t)
+          for t in direct:
+              dis('DIRECT_CALLEE '+str(methods.get(t,'')),t,0x350)
+
+          print('\n=== RELEVANT STRING LITERALS ===')
+          terms=['GameData','MGIResources','AssetBundles','LeagueInfoWarehouse','prefab','StreamingAssets','FutureContent','2023','2024','2025']
+          for x in arr:
+              s=x.get('value','')
+              if any(t.lower() in s.lower() for t in terms):
+                  print(json.dumps(x,ensure_ascii=False))
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-exact-present-warehouse-bundle
+          path: out/result.txt
+          retention-days: 1
