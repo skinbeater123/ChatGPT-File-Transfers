@@ -1,0 +1,21 @@
+ref_width 0x180228ae0 0x227ee0
+grip_fade 0x180228ad0 0x227ed0
+grip_fade_stop 0x180228ac0 0x227ec0
+grip_fade_start 0x180228ab0 0x227eb0
+long_frict 0x180228aa0 0x227ea0
+long_stiff 0x180228a90 0x227e90
+frict_load1 0x1802289e0 0x227de0
+magic_b 0x1802289c0 0x227dc0
+friction 0x180228940 0x227d40
+moment 0x18022894c 0x227d4c
+refs 10
+friction 0x180038e31 lea r8, [rip + 0x1efb08]
+moment 0x180038e43 lea r8, [rip + 0x1efb02]
+magic_b 0x180038e8b lea r8, [rip + 0x1efb2e]
+frict_load1 0x180038ed3 lea r8, [rip + 0x1efb06]
+long_stiff 0x180038f99 lea r8, [rip + 0x1efaf0]
+long_frict 0x180038fab lea r8, [rip + 0x1efaee]
+grip_fade_start 0x180038fbd lea r8, [rip + 0x1efaec]
+grip_fade_stop 0x180038fcf lea r8, [rip + 0x1efaea]
+grip_fade 0x180038fe1 lea r8, [rip + 0x1efae8]
+ref_width 0x180038ff3 lea r8, [rip + 0x1efae6]
