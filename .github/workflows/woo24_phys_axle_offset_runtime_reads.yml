@@ -65,6 +65,7 @@ jobs:
           # code direct refs
           refs=[]
           for idx,ins in enumerate(insns):
+              if ins.id == 0: continue
               vals=[]
               for op in ins.operands:
                   if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
@@ -83,6 +84,7 @@ jobs:
               src=None
               for j in range(idx-1,max(-1,idx-12),-1):
                   p=insns[j]
+                  if p.id == 0: continue
                   if p.mnemonic=='mov' and p.operands and p.operands[0].type==X86_OP_REG and p.reg_name(p.operands[0].reg) in ('r9d','r9'):
                       if len(p.operands)>1 and p.operands[1].type==X86_OP_IMM:
                           off_guess=p.operands[1].imm; src=p.address; break
@@ -129,6 +131,7 @@ jobs:
           float_mn=('movss','movsd','mulss','divss','addss','subss','minss','maxss','comiss','ucomiss',
                     'movups','movaps','mulps','addps','subps','divps')
           for idx,ins in enumerate(insns):
+              if ins.id == 0: continue
               if ins.mnemonic not in float_mn: continue
               for op in ins.operands:
                   if op.type==X86_OP_MEM and op.mem.disp in recovered and op.mem.base not in (0,X86_REG_RIP):
