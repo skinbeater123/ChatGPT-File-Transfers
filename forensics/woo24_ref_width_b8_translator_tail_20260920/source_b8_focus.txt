@@ -1,0 +1,134 @@
+
+TARGET 0x18007ce97: movss dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce35: movss    dword ptr [rcx + 0x9c], xmm1
+  0x000000018007ce3d: mov      eax, dword ptr [rdx + 0x98]
+  0x000000018007ce43: mov      dword ptr [rcx + 0xa0], eax
+  0x000000018007ce49: movss    xmm0, dword ptr [rdx + 0x9c]
+  0x000000018007ce51: mulss    xmm0, xmm6
+  0x000000018007ce55: call     0x1801fce80
+  0x000000018007ce5a: movss    dword ptr [rdi + 0xa4], xmm0
+  0x000000018007ce62: mov      eax, dword ptr [rbx + 0xa0]
+  0x000000018007ce68: mov      dword ptr [rdi + 0xa8], eax
+  0x000000018007ce6e: mov      eax, dword ptr [rbx + 0xa4]
+  0x000000018007ce74: mov      dword ptr [rdi + 0xac], eax
+  0x000000018007ce7a: mov      eax, dword ptr [rbx + 0xa8]
+  0x000000018007ce80: mov      dword ptr [rdi + 0xb0], eax
+  0x000000018007ce86: movss    xmm0, dword ptr [rbx + 0xac]
+  0x000000018007ce8e: mulss    xmm0, xmm6
+  0x000000018007ce92: call     0x1801fce80
+  0x000000018007ce97: movss    dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce9f: movss    xmm0, dword ptr [rbx + 0xb0]
+  0x000000018007cea7: mulss    xmm0, xmm6
+  0x000000018007ceab: call     0x1801fce80
+  0x000000018007ceb0: movaps   xmm6, xmmword ptr [rsp + 0x20]
+  0x000000018007ceb5: movss    dword ptr [rdi + 0xb8], xmm0
+  0x000000018007cebd: mov      eax, dword ptr [rbx + 0xb4]
+  0x000000018007cec3: mov      dword ptr [rdi + 0xbc], eax
+  0x000000018007cec9: mov      eax, dword ptr [rbx + 0xb8]
+  0x000000018007cecf: mov      rbx, qword ptr [rsp + 0x48]
+  0x000000018007ced4: mov      dword ptr [rdi + 0xc0], eax
+  0x000000018007ceda: add      rsp, 0x30
+  0x000000018007cede: pop      rdi
+  0x000000018007cedf: ret      
+
+TARGET 0x18007ceb5: movss dword ptr [rdi + 0xb8], xmm0
+  0x000000018007ce55: call     0x1801fce80
+  0x000000018007ce5a: movss    dword ptr [rdi + 0xa4], xmm0
+  0x000000018007ce62: mov      eax, dword ptr [rbx + 0xa0]
+  0x000000018007ce68: mov      dword ptr [rdi + 0xa8], eax
+  0x000000018007ce6e: mov      eax, dword ptr [rbx + 0xa4]
+  0x000000018007ce74: mov      dword ptr [rdi + 0xac], eax
+  0x000000018007ce7a: mov      eax, dword ptr [rbx + 0xa8]
+  0x000000018007ce80: mov      dword ptr [rdi + 0xb0], eax
+  0x000000018007ce86: movss    xmm0, dword ptr [rbx + 0xac]
+  0x000000018007ce8e: mulss    xmm0, xmm6
+  0x000000018007ce92: call     0x1801fce80
+  0x000000018007ce97: movss    dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce9f: movss    xmm0, dword ptr [rbx + 0xb0]
+  0x000000018007cea7: mulss    xmm0, xmm6
+  0x000000018007ceab: call     0x1801fce80
+  0x000000018007ceb0: movaps   xmm6, xmmword ptr [rsp + 0x20]
+  0x000000018007ceb5: movss    dword ptr [rdi + 0xb8], xmm0
+  0x000000018007cebd: mov      eax, dword ptr [rbx + 0xb4]
+  0x000000018007cec3: mov      dword ptr [rdi + 0xbc], eax
+  0x000000018007cec9: mov      eax, dword ptr [rbx + 0xb8]
+  0x000000018007cecf: mov      rbx, qword ptr [rsp + 0x48]
+  0x000000018007ced4: mov      dword ptr [rdi + 0xc0], eax
+  0x000000018007ceda: add      rsp, 0x30
+  0x000000018007cede: pop      rdi
+  0x000000018007cedf: ret      
+
+TARGET 0x18007cebd: mov eax, dword ptr [rbx + 0xb4]
+  0x000000018007ce5a: movss    dword ptr [rdi + 0xa4], xmm0
+  0x000000018007ce62: mov      eax, dword ptr [rbx + 0xa0]
+  0x000000018007ce68: mov      dword ptr [rdi + 0xa8], eax
+  0x000000018007ce6e: mov      eax, dword ptr [rbx + 0xa4]
+  0x000000018007ce74: mov      dword ptr [rdi + 0xac], eax
+  0x000000018007ce7a: mov      eax, dword ptr [rbx + 0xa8]
+  0x000000018007ce80: mov      dword ptr [rdi + 0xb0], eax
+  0x000000018007ce86: movss    xmm0, dword ptr [rbx + 0xac]
+  0x000000018007ce8e: mulss    xmm0, xmm6
+  0x000000018007ce92: call     0x1801fce80
+  0x000000018007ce97: movss    dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce9f: movss    xmm0, dword ptr [rbx + 0xb0]
+  0x000000018007cea7: mulss    xmm0, xmm6
+  0x000000018007ceab: call     0x1801fce80
+  0x000000018007ceb0: movaps   xmm6, xmmword ptr [rsp + 0x20]
+  0x000000018007ceb5: movss    dword ptr [rdi + 0xb8], xmm0
+  0x000000018007cebd: mov      eax, dword ptr [rbx + 0xb4]
+  0x000000018007cec3: mov      dword ptr [rdi + 0xbc], eax
+  0x000000018007cec9: mov      eax, dword ptr [rbx + 0xb8]
+  0x000000018007cecf: mov      rbx, qword ptr [rsp + 0x48]
+  0x000000018007ced4: mov      dword ptr [rdi + 0xc0], eax
+  0x000000018007ceda: add      rsp, 0x30
+  0x000000018007cede: pop      rdi
+  0x000000018007cedf: ret      
+
+TARGET 0x18007cec3: mov dword ptr [rdi + 0xbc], eax
+  0x000000018007ce62: mov      eax, dword ptr [rbx + 0xa0]
+  0x000000018007ce68: mov      dword ptr [rdi + 0xa8], eax
+  0x000000018007ce6e: mov      eax, dword ptr [rbx + 0xa4]
+  0x000000018007ce74: mov      dword ptr [rdi + 0xac], eax
+  0x000000018007ce7a: mov      eax, dword ptr [rbx + 0xa8]
+  0x000000018007ce80: mov      dword ptr [rdi + 0xb0], eax
+  0x000000018007ce86: movss    xmm0, dword ptr [rbx + 0xac]
+  0x000000018007ce8e: mulss    xmm0, xmm6
+  0x000000018007ce92: call     0x1801fce80
+  0x000000018007ce97: movss    dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce9f: movss    xmm0, dword ptr [rbx + 0xb0]
+  0x000000018007cea7: mulss    xmm0, xmm6
+  0x000000018007ceab: call     0x1801fce80
+  0x000000018007ceb0: movaps   xmm6, xmmword ptr [rsp + 0x20]
+  0x000000018007ceb5: movss    dword ptr [rdi + 0xb8], xmm0
+  0x000000018007cebd: mov      eax, dword ptr [rbx + 0xb4]
+  0x000000018007cec3: mov      dword ptr [rdi + 0xbc], eax
+  0x000000018007cec9: mov      eax, dword ptr [rbx + 0xb8]
+  0x000000018007cecf: mov      rbx, qword ptr [rsp + 0x48]
+  0x000000018007ced4: mov      dword ptr [rdi + 0xc0], eax
+  0x000000018007ceda: add      rsp, 0x30
+  0x000000018007cede: pop      rdi
+  0x000000018007cedf: ret      
+
+TARGET 0x18007cec9: mov eax, dword ptr [rbx + 0xb8]
+  0x000000018007ce68: mov      dword ptr [rdi + 0xa8], eax
+  0x000000018007ce6e: mov      eax, dword ptr [rbx + 0xa4]
+  0x000000018007ce74: mov      dword ptr [rdi + 0xac], eax
+  0x000000018007ce7a: mov      eax, dword ptr [rbx + 0xa8]
+  0x000000018007ce80: mov      dword ptr [rdi + 0xb0], eax
+  0x000000018007ce86: movss    xmm0, dword ptr [rbx + 0xac]
+  0x000000018007ce8e: mulss    xmm0, xmm6
+  0x000000018007ce92: call     0x1801fce80
+  0x000000018007ce97: movss    dword ptr [rdi + 0xb4], xmm0
+  0x000000018007ce9f: movss    xmm0, dword ptr [rbx + 0xb0]
+  0x000000018007cea7: mulss    xmm0, xmm6
+  0x000000018007ceab: call     0x1801fce80
+  0x000000018007ceb0: movaps   xmm6, xmmword ptr [rsp + 0x20]
+  0x000000018007ceb5: movss    dword ptr [rdi + 0xb8], xmm0
+  0x000000018007cebd: mov      eax, dword ptr [rbx + 0xb4]
+  0x000000018007cec3: mov      dword ptr [rdi + 0xbc], eax
+  0x000000018007cec9: mov      eax, dword ptr [rbx + 0xb8]
+  0x000000018007cecf: mov      rbx, qword ptr [rsp + 0x48]
+  0x000000018007ced4: mov      dword ptr [rdi + 0xc0], eax
+  0x000000018007ceda: add      rsp, 0x30
+  0x000000018007cede: pop      rdi
+  0x000000018007cedf: ret      
