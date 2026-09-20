@@ -1,0 +1,32 @@
+name: UnityPy parser bridge
+
+on:
+  push:
+    paths:
+      - '.github/workflows/unitypy_parser_bridge.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Package UnityPy
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out/site
+          python3 -m pip install --disable-pip-version-check --quiet --target out/site UnityPy
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0,'out/site')
+          import UnityPy
+          print('UNITYPY_OK', UnityPy)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unitypy-parser-bridge
+          path: out/site/
+          retention-days: 1
