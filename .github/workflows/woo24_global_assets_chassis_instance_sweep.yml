@@ -1,0 +1,92 @@
+name: WoO24 global assets chassis instance sweep
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_global_assets_chassis_instance_sweep.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sweep all global files for chassis/physics instances
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+          python3 - <<'PY' > out/sweep.txt
+          import UnityPy, json, collections, re
+          from pathlib import Path
+
+          target={
+            1102:'MGI.ChassisInfo',
+            1113:'PhysicsPrefabResources',
+            1431:'ChassisIdAsset',
+            1835:'MGI.CarManager.CarLoader',
+            2319:'NextChassis.Chassis',
+            1008:'NextChassis.PhysChassisAsset',
+            1547:'NextChassis.PhysWheelAsset',
+            1551:'NextChassis.CarPhysicsAsset',
+            2104:'NextChassis.PhysEngineAsset',
+            2363:'NextChassis.PhysTransmissionAsset',
+            2449:'NextChassis.PhysAxleAsset',
+            2408:'ChassisTrackData',
+            1015:'LeagueInfo',
+            282:'MGI.LeagueInfoWarehouse',
+          }
+
+          env=UnityPy.load('unpack')
+          print('FILES',list(env.files.keys()))
+          total=0
+          for k,sf in env.files.items():
+              if not hasattr(sf,'objects'): continue
+              print('\n### FILE',k,'name',getattr(sf,'name',''),'objects',len(sf.objects))
+              counts=collections.Counter()
+              hits=[]
+              for o in sf.objects.values():
+                  if o.type.name!='MonoBehaviour': continue
+                  total+=1
+                  raw=bytes(o.get_raw_data())
+                  # direct raw header parse: PPtr<GameObject> 12 + enabled/alignment 4 + PPtr<MonoScript> 12
+                  if len(raw)<28: continue
+                  fid=int.from_bytes(raw[16:20],'little',signed=True)
+                  pid=int.from_bytes(raw[20:28],'little',signed=True)
+                  counts[(fid,pid)]+=1
+                  if pid in target:
+                      rec={'obj_path':o.path_id,'size':len(raw),'script_file_id':fid,'script_path_id':pid,'class':target[pid],'raw':raw.hex()}
+                      # extract first strings naively
+                      rec['ascii_strings']=re.findall(rb'[ -~]{4,}',raw)
+                      rec['ascii_strings']=[x.decode('ascii','ignore') for x in rec['ascii_strings']]
+                      hits.append(rec)
+              print('TARGET_COUNTS')
+              for pid,name in target.items():
+                  cs=[(fid,c) for (fid,p),c in counts.items() if p==pid]
+                  if cs: print(pid,name,cs)
+              print('HITS',len(hits))
+              for rec in hits:
+                  print(json.dumps(rec,indent=2))
+              print('TOP_PTRS',counts.most_common(30))
+
+          print('\n=== RAW STRING LOCATIONS ===')
+          for p in Path('unpack').iterdir():
+              if not p.is_file(): continue
+              b=p.read_bytes()
+              for needle in [b'Sprint410Dirt',b'Sprint410',b'PhysicsPrefabResources',b'PhysicsPrefabs/',b'CarPhysics.asset']:
+                  offs=[m.start() for m in re.finditer(re.escape(needle),b)]
+                  if offs: print(p.name,needle.decode(),offs[:100], 'count',len(offs))
+          print('TOTAL_MB',total)
+          PY
+          cat out/sweep.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-global-assets-chassis-sweep
+          path: out/
+          retention-days: 1
