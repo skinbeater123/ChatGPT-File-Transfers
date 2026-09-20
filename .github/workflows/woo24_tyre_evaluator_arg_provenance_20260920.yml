@@ -1,0 +1,116 @@
+name: WoO24 tyre evaluator argument provenance 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_evaluator_arg_provenance_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/provenance.txt
+          import pefile,bisect,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; raw=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          funcs=sorted(set((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[a for a,b in funcs]
+          def off(v):return pe.get_offset_from_rva(v-B)
+          def bound(v):
+            i=bisect.bisect_right(starts,v)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=v<funcs[i][1] else None
+          def dis(f):
+            a,b=f; md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+            return list(md.disasm(raw[off(a):off(a)+(b-a)],a))
+          def memops(x):
+            try:return [o for o in x.operands if o.type==X86_OP_MEM]
+            except:return []
+          def cstr(v):
+            try:
+              b=raw[off(v):off(v)+280].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=q<127 or q in (9,10,13) for q in b):return b.decode('ascii','replace')
+            except:pass
+          def f32(v):
+            try:return struct.unpack('<f',raw[off(v):off(v)+4])[0]
+            except:return None
+          allf={f:dis(f) for f in funcs}
+          target=0x180059de0
+          print('TARGET_BOUNDARY',bound(target))
+          print('\n=== CALLERS OF TYRE EVALUATOR ===')
+          callers=[]
+          for f,ii in allf.items():
+            for i,x in enumerate(ii):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==target:
+                callers.append((f,i,x))
+                print('\nCALL',hex(x.address),'caller',tuple(hex(z) for z in f))
+                for y in ii[max(0,i-80):min(len(ii),i+60)]:
+                  ann=[]
+                  for o in memops(y):
+                    if o.mem.base==X86_REG_RIP:
+                      v=y.address+y.size+o.mem.disp
+                      s=cstr(v); fv=f32(v)
+                      if s:ann.append('STR='+repr(s))
+                      elif fv is not None:ann.append('F32='+repr(fv))
+                  print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str:74s} {" | ".join(ann)}')
+          print('CALLER_COUNT',len(callers))
+
+          print('\n=== EVALUATOR MEMORY OFFSET CENSUS BY BASE REGISTER ===')
+          tf=bound(target); ii=allf[tf]
+          regs={}
+          for x in ii:
+            for o in memops(x):
+              if o.mem.base and o.mem.base not in (X86_REG_RSP,X86_REG_RBP,X86_REG_RIP):
+                reg=x.reg_name(o.mem.base)
+                regs.setdefault(reg,[]).append((o.mem.disp,x))
+          for reg,h in regs.items():
+            offs=sorted(set(d for d,x in h))
+            print('\nBASE',reg,'offsets',','.join(hex(d) for d in offs))
+            for d,x in h:
+              if d in (0x58,0x5c,0x60,0x64,0x68,0x6c,0x70,0x74,0x78,0x7c,0x80,0x84,0x88,0x8c,0x90,0x94,0x98,0x9c,0xa0,0xa4,0xa8,0xac,0xb0,0xb4,0xb8,0xbc,0xc0):
+                print(f'  {x.address:#x}: {x.mnemonic:8s} {x.op_str} off={d:#x}')
+
+          print('\n=== SOURCE STRINGS IN EVALUATOR AND CALLERS ===')
+          seen=set()
+          for f,_,_ in callers:
+            for x in allf[f]:
+              for o in memops(x):
+                if o.mem.base==X86_REG_RIP:
+                  v=x.address+x.size+o.mem.disp; s=cstr(v)
+                  if s and s not in seen:
+                    seen.add(s); print(hex(x.address),repr(s))
+          for x in ii:
+            for o in memops(x):
+              if o.mem.base==X86_REG_RIP:
+                v=x.address+x.size+o.mem.disp;s=cstr(v)
+                if s and s not in seen:
+                  seen.add(s);print(hex(x.address),repr(s))
+
+          print('\n=== PHYS.DLL STRING/OFFSET CHECK ===')
+          fn2='p/phys.dll'; r2=Path(fn2).read_bytes(); pe2=pefile.PE(fn2); B2=pe2.OPTIONAL_HEADER.ImageBase
+          funcs2=sorted(set((B2+e.struct.BeginAddress,B2+e.struct.EndAddress) for e in getattr(pe2,'DIRECTORY_ENTRY_EXCEPTION',[]) if e.struct.EndAddress>e.struct.BeginAddress))
+          n=0
+          for a,b in funcs2:
+            md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+            try: ins=list(md.disasm(r2[pe2.get_offset_from_rva(a-B2):pe2.get_offset_from_rva(a-B2)+(b-a)],a))
+            except:continue
+            for x in ins:
+              for o in (x.operands if hasattr(x,'operands') else []):
+                if o.type==X86_OP_MEM and o.mem.disp in (0xb8,0xc0,0x24c,0x310):
+                  if o.mem.base not in (X86_REG_RSP,X86_REG_RBP,X86_REG_RIP,0):
+                    n+=1
+                    if n<=200: print(f'phys.dll {x.address:#x} func={a:#x}-{b:#x}: {x.mnemonic} {x.op_str}')
+          print('PHYS_DLL_CANDIDATE_COUNT',n)
+          PY
+          cat out/provenance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-evaluator-arg-provenance
+          path: out/provenance.txt
+          retention-days: 3
