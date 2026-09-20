@@ -1,0 +1,91 @@
+name: WoO24 phys source-file xref atlas
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_phys_source_file_xref_atlas.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  atlas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Map embedded original source filenames to code
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile,re,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          dll='phys_unpack/physimpl.dll'
+          data=Path(dll).read_bytes()
+          pe=pefile.PE(dll)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def vaoff(off):
+              for s in pe.sections:
+                  if s.PointerToRawData <= off < s.PointerToRawData+s.SizeOfRawData:
+                      return base+s.VirtualAddress+(off-s.PointerToRawData)
+              return None
+
+          # Recover embedded source path strings.
+          pat=re.compile(rb'[A-Za-z]:\\[^\x00\r\n]{1,180}?\.(?:cpp|c|h|hpp)\x00')
+          sources={}
+          for m in pat.finditer(data):
+              raw=m.group()[:-1]
+              try:s=raw.decode('ascii')
+              except:continue
+              if '\\Phys\\' not in s:continue
+              va=vaoff(m.start())
+              if va:sources[va]=s
+
+          print('SOURCE_FILE_STRINGS',len(sources))
+          for va,s in sorted(sources.items(),key=lambda x:x[1].lower()):
+              print(hex(va),s)
+
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          insns=list(md.disasm(code,start))
+          refs=[]
+          for idx,ins in enumerate(insns):
+              if ins.id==0:continue
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      va=ins.address+ins.size+op.mem.disp
+                      if va in sources:refs.append((idx,va,sources[va]))
+                  elif op.type==X86_OP_IMM and op.imm in sources:
+                      refs.append((idx,op.imm,sources[op.imm]))
+          print('\nSOURCE_XREFS',len(refs))
+          for idx,va,s in refs:
+              ins=insns[idx]
+              print('\nXREF',hex(ins.address),s)
+              for j in range(max(0,idx-12),min(len(insns),idx+16)):
+                  p=insns[j];mark='>>' if j==idx else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          # Export addresses of update/task functions.
+          print('\nRELEVANT EXPORTS')
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+              for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                  if not sym.name:continue
+                  n=sym.name.decode(errors='replace')
+                  if any(x.lower() in n.lower() for x in ['Physics','PhysTask','Car','Wheel','PXUpdate','Driving']):
+                      print(hex(base+sym.address),n)
+          PY
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-phys-source-file-xref-atlas
+          path: out/result.txt
+          retention-days: 2
