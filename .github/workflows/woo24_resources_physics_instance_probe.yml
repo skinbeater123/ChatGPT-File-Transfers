@@ -1,0 +1,134 @@
+name: WoO24 resources physics instance probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_physics_instance_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve physics MonoBehaviour instances in resources.assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/physics_instances.txt
+          from pathlib import Path
+          import json, traceback
+          import UnityPy
+
+          root=Path('unpack')
+          env=UnityPy.load(str(root))
+
+          target_names={
+              'CarPhysicsAsset','PhysChassisAsset','PhysWheelAsset','PhysAxleAsset',
+              'PhysEngineAsset','PhysTransmissionAsset'
+          }
+
+          # Build script map from all MonoScript objects across loaded serialized files.
+          script_by_key={}
+          script_by_path={}
+          for obj in env.objects:
+              if obj.type.name!='MonoScript':
+                  continue
+              try:
+                  d=obj.read()
+                  name=getattr(d,'m_ClassName','') or getattr(d,'m_Name','') or ''
+                  ns=getattr(d,'m_Namespace','') or ''
+                  asm=getattr(d,'m_AssemblyName','') or ''
+                  key=(getattr(obj.assets_file,'name',''), obj.path_id)
+                  script_by_key[key]=(name,ns,asm,obj)
+                  script_by_path[obj.path_id]=(name,ns,asm,obj)
+              except Exception:
+                  pass
+
+          print('TARGET MONOSCRIPTS')
+          for pid,(name,ns,asm,obj) in sorted(script_by_path.items()):
+              if name in target_names:
+                  print(f'path_id={pid} class={name} namespace={ns} assembly={asm} file={getattr(obj.assets_file,"name","")}')
+          print()
+
+          hits=[]
+          unresolved=0
+          for obj in env.objects:
+              if obj.type.name!='MonoBehaviour':
+                  continue
+              af=getattr(obj.assets_file,'name','')
+              if not af.endswith('resources.assets') and af!='resources.assets':
+                  continue
+              try:
+                  d=obj.read()
+              except Exception:
+                  continue
+
+              script_name=None
+              script_pid=None
+              file_id=None
+              try:
+                  p=d.m_Script
+                  script_pid=getattr(p,'path_id',None)
+                  file_id=getattr(p,'file_id',None)
+                  try:
+                      so=p.read()
+                      script_name=getattr(so,'m_ClassName','') or getattr(so,'m_Name','') or ''
+                  except Exception:
+                      pass
+              except Exception:
+                  pass
+
+              if not script_name and script_pid in script_by_path:
+                  script_name=script_by_path[script_pid][0]
+
+              if script_name not in target_names:
+                  continue
+
+              name=getattr(d,'m_Name','') or ''
+              raw=obj.get_raw_data()
+              rec={
+                  'path_id':obj.path_id,
+                  'script':script_name,
+                  'name':name,
+                  'script_file_id':file_id,
+                  'script_path_id':script_pid,
+                  'size':len(raw),
+                  'raw_hex':raw.hex(),
+              }
+
+              # Try typetree when present.
+              try:
+                  tree=obj.read_typetree()
+                  rec['typetree']=tree
+              except Exception as e:
+                  rec['typetree_error']=repr(e)
+
+              hits.append(rec)
+
+          print(f'PHYSICS_INSTANCE_COUNT {len(hits)}')
+          for rec in hits:
+              print('\n--- INSTANCE ---')
+              print(json.dumps({k:v for k,v in rec.items() if k!='raw_hex'}, default=str, indent=2))
+              print('RAW_HEX',rec['raw_hex'])
+
+          Path('out/physics_instances.json').write_text(json.dumps(hits,default=str,indent=2))
+          PY
+
+          cat out/physics_instances.txt
+
+      - name: Upload derived results
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-physics-instance-probe
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
