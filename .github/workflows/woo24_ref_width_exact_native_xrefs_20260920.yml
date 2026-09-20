@@ -1,0 +1,117 @@
+name: WoO24 ref_width exact native xrefs 20260920
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_exact_native_xrefs_20260920.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - name: Exact ref_width native xrefs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_refx
+          mkdir -p phys_unpack out_refx
+          unzip -q phys.zip -d phys_unpack
+          cat > /tmp/refx.py <<'PY'
+          import pefile, os
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+              if s.Characteristics & 0x20000000:
+                  code=raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData]
+                  ins.extend(md.disasm(code,base+s.VirtualAddress))
+          print('base',hex(base),'decoded',len(ins))
+          front=0x180273720; rear=0x180273660
+          targets={
+              'rear_ref_width':rear+0xb8,
+              'front_ref_width':front+0xb8,
+              'rear_grip_fade':rear+0xb4,
+              'front_grip_fade':front+0xb4,
+              'rear_grip_fade_stop':rear+0xb0,
+              'front_grip_fade_stop':front+0xb0,
+          }
+          def ops(i):
+              try:return i.operands
+              except:return []
+          refs=[]
+          for idx,i in enumerate(ins):
+              for op in ops(i):
+                  t=None
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      t=i.address+i.size+op.mem.disp
+                  elif op.type==X86_OP_IMM:
+                      t=op.imm
+                  if t in targets.values():
+                      refs.append((idx,i,t))
+          with open('out_refx/exact_refs.txt','w') as o:
+              for idx,i,t in refs:
+                  names=[k for k,v in targets.items() if v==t]
+                  o.write(f'\n===== {"|".join(names)} target={t:#x} xref={i.address:#x} =====\n')
+                  for q in ins[max(0,idx-80):min(len(ins),idx+160)]:
+                      o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          print('exact target refs',len(refs))
+          for _,i,t in refs: print(hex(i.address),[k for k,v in targets.items() if v==t],i.mnemonic,i.op_str)
+
+          # Candidate translator recovered in prior pass.
+          rva=0x7cbd0; va=base+rva
+          nearest=min(range(len(ins)),key=lambda k:abs(ins[k].address-va))
+          with open('out_refx/translator_7cbd0.txt','w') as o:
+              for q in ins[nearest:min(len(ins),nearest+1200)]:
+                  marks=[]
+                  for op in ops(q):
+                      if op.type==X86_OP_MEM and op.mem.disp in (0xa0,0xa4,0xa8,0xac,0xb0,0xb4,0xb8,0xbc,0xc0):
+                          marks.append(f' [DISP {op.mem.disp:#x}]')
+                  o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}{"".join(marks)}\n')
+                  if q.mnemonic=='ret' and q.address>va+5: break
+
+          # Dump exported config setter functions using export RVAs.
+          pe.parse_data_directories()
+          wanted={'PhysicsConfigSetFrontAxle','PhysicsConfigSetRearAxle','PhysicsConfigSetWheel'}
+          ex={}
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+              for s in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                  if s.name:
+                      n=s.name.decode(errors='ignore')
+                      if n in wanted: ex[n]=base+s.address
+          with open('out_refx/config_setters.txt','w') as o:
+              for n,va2 in ex.items():
+                  o.write(f'\n===== {n} {va2:#x} =====\n')
+                  k=min(range(len(ins)),key=lambda z:abs(ins[z].address-va2))
+                  for q in ins[k:min(len(ins),k+1000)]:
+                      o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+                      if q.mnemonic=='ret' and q.address>va2+5: break
+          print('exports', {k:hex(v) for k,v in ex.items()})
+          PY
+          python /tmp/refx.py | tee out_refx/summary.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-exact-native-xrefs
+          path: out_refx/
+          retention-days: 3
+      - name: Publish results
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_ref_width_exact_native_xrefs_20260920
+          mkdir -p forensics_output/woo24_ref_width_exact_native_xrefs_20260920
+          cp out_refx/* forensics_output/woo24_ref_width_exact_native_xrefs_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_ref_width_exact_native_xrefs_20260920
+          git commit -m "forensics: publish WoO24 exact ref_width native xrefs" || exit 0
+          git push
