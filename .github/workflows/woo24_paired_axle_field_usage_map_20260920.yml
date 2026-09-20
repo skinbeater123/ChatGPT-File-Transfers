@@ -1,0 +1,90 @@
+name: WoO24 paired axle field usage map 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_paired_axle_field_usage_map_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_usage
+          mkdir -p phys_unpack out_usage
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_usage/summary.txt
+          import pefile,bisect,collections
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll';raw=open(p,'rb').read();pe=pefile.PE(p);base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          funcs=[]
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          for e in pe.DIRECTORY_ENTRY_EXCEPTION:funcs.append((base+e.struct.BeginAddress,base+e.struct.EndAddress))
+          funcs.sort()
+          def fn(a):
+            k=bisect.bisect_right(funcs,(a,2**64-1))-1
+            return funcs[k] if k>=0 and funcs[k][0]<=a<funcs[k][1] else None
+          d=collections.defaultdict(lambda:collections.defaultdict(list))
+          for i in ins:
+            f=fn(i.address)
+            if not f:continue
+            try:ops=i.operands
+            except:continue
+            for o in ops:
+              if o.type==X86_OP_MEM and o.mem.base not in (0,X86_REG_RIP) and o.mem.index==0:
+                disp=o.mem.disp
+                if 0x18c<=disp<=0x310:
+                  d[f][o.mem.base].append((disp,i.address,i.mnemonic,i.op_str))
+          matches=[]
+          for f,bases in d.items():
+            for br,xs in bases.items():
+              ds={x[0] for x in xs}
+              pairs=[]
+              for x in sorted(ds):
+                if 0x18c<=x<=0x24c and x+0xc4 in ds:
+                  pairs.append((x,x+0xc4))
+              if len(pairs)>=2:
+                matches.append((len(pairs),f,br,pairs,xs))
+          matches.sort(reverse=True,key=lambda x:x[0])
+          print('paired-axle consumers',len(matches))
+          width_users=0
+          for n,(score,f,br,pairs,xs) in enumerate(matches[:100],1):
+            width=(0x24c,0x310) in pairs
+            width_users+=width
+            print(n,'fn',hex(f[0]),hex(f[1]),'baseReg',br,'pairs',[(hex(a),hex(b)) for a,b in pairs],'WIDTH',width)
+          print('paired consumers including width pair',width_users)
+          with open('out_usage/top_functions.txt','w') as o:
+            for rank,(score,f,br,pairs,xs) in enumerate(matches[:30],1):
+              o.write(f'\n===== rank={rank} fn={f[0]:#x}-{f[1]:#x} baseReg={br} pairs={[(hex(a),hex(b)) for a,b in pairs]} =====\n')
+              for q in ins:
+                if f[0]<=q.address<f[1]:
+                  o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-paired-axle-field-usage-map
+          path: out_usage/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_paired_axle_field_usage_map_20260920
+          mkdir -p forensics_output/woo24_paired_axle_field_usage_map_20260920
+          cp out_usage/* forensics_output/woo24_paired_axle_field_usage_map_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_paired_axle_field_usage_map_20260920
+          git commit -m "forensics: publish WoO24 paired axle field usage map" || exit 0
+          git push
