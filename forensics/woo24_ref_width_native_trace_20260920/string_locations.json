@@ -1,0 +1,164 @@
+[
+  {
+    "term": "ref_width",
+    "file_off": 2260704,
+    "rva": 2263776,
+    "va": 6444714720
+  },
+  {
+    "term": "frict_load1",
+    "file_off": 2260448,
+    "rva": 2263520,
+    "va": 6444714464
+  },
+  {
+    "term": "frict_k1",
+    "file_off": 2260464,
+    "rva": 2263536,
+    "va": 6444714480
+  },
+  {
+    "term": "frict_load2",
+    "file_off": 2260480,
+    "rva": 2263552,
+    "va": 6444714496
+  },
+  {
+    "term": "frict_k2",
+    "file_off": 2260496,
+    "rva": 2263568,
+    "va": 6444714512
+  },
+  {
+    "term": "stiff_load1",
+    "file_off": 2260512,
+    "rva": 2263584,
+    "va": 6444714528
+  },
+  {
+    "term": "stiff_c1",
+    "file_off": 2260528,
+    "rva": 2263600,
+    "va": 6444714544
+  },
+  {
+    "term": "stiff_load2",
+    "file_off": 2260544,
+    "rva": 2263616,
+    "va": 6444714560
+  },
+  {
+    "term": "stiff_c2",
+    "file_off": 2260560,
+    "rva": 2263632,
+    "va": 6444714576
+  },
+  {
+    "term": "camber_stiff",
+    "file_off": 2260576,
+    "rva": 2263648,
+    "va": 6444714592
+  },
+  {
+    "term": "camber_grip",
+    "file_off": 2259423,
+    "rva": 2262495,
+    "va": 6444713439
+  },
+  {
+    "term": "camber_grip",
+    "file_off": 2259455,
+    "rva": 2262527,
+    "va": 6444713471
+  },
+  {
+    "term": "camber_grip",
+    "file_off": 2259495,
+    "rva": 2262567,
+    "va": 6444713511
+  },
+  {
+    "term": "camber_grip",
+    "file_off": 2260608,
+    "rva": 2263680,
+    "va": 6444714624
+  },
+  {
+    "term": "camber_grip",
+    "file_off": 2293088,
+    "rva": 2296160,
+    "va": 6444747104
+  },
+  {
+    "term": "camber_peak",
+    "file_off": 2260592,
+    "rva": 2263664,
+    "va": 6444714608
+  },
+  {
+    "term": "long_stiff",
+    "file_off": 2260624,
+    "rva": 2263696,
+    "va": 6444714640
+  },
+  {
+    "term": "long_frict",
+    "file_off": 2260640,
+    "rva": 2263712,
+    "va": 6444714656
+  },
+  {
+    "term": "magic_b",
+    "file_off": 2260416,
+    "rva": 2263488,
+    "va": 6444714432
+  },
+  {
+    "term": "magic_c",
+    "file_off": 2260424,
+    "rva": 2263496,
+    "va": 6444714440
+  },
+  {
+    "term": "magic_d",
+    "file_off": 2260432,
+    "rva": 2263504,
+    "va": 6444714448
+  },
+  {
+    "term": "magic_e",
+    "file_off": 2260440,
+    "rva": 2263512,
+    "va": 6444714456
+  },
+  {
+    "term": "grip_fade_start",
+    "file_off": 2260656,
+    "rva": 2263728,
+    "va": 6444714672
+  },
+  {
+    "term": "grip_fade_stop",
+    "file_off": 2260672,
+    "rva": 2263744,
+    "va": 6444714688
+  },
+  {
+    "term": "grip_fade",
+    "file_off": 2260656,
+    "rva": 2263728,
+    "va": 6444714672
+  },
+  {
+    "term": "grip_fade",
+    "file_off": 2260672,
+    "rva": 2263744,
+    "va": 6444714688
+  },
+  {
+    "term": "grip_fade",
+    "file_off": 2260688,
+    "rva": 2263760,
+    "va": 6444714704
+  }
+]
