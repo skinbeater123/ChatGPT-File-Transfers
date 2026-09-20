@@ -1,0 +1,64 @@
+name: WoO24 archive physics bundle locator
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_archive_physics_bundle_locator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  locate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate Sprint410 and physics bundles in existing archives
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          {
+            echo "REGULAR ZIP INVENTORIES"
+            echo "======================="
+            for z in "WOO24.zip" "globalgamemanagers.zip" "phys.zip" "a01_sprintcar.zip" "sprintcar 2 .zip"; do
+              echo
+              echo "### $z"
+              if [ -f "$z" ]; then
+                unzip -l "$z" 2>/dev/null | grep -Ei 'sprint.?410|410|phys|axle|wheel|tire|tyre|chassis|\.rab$|asset|bundle' || true
+              else
+                echo MISSING
+              fi
+            done
+
+            echo
+            echo "SPLIT ARCHIVE INVENTORIES"
+            echo "========================="
+            for z in "sprinter.zip.001" "Sprint Car Project.zip.001"; do
+              echo
+              echo "### $z"
+              if [ -f "$z" ]; then
+                7z l "$z" 2>/dev/null | grep -Ei 'sprint.?410|410|phys|axle|wheel|tire|tyre|chassis|\.rab$|asset|bundle' || true
+              else
+                echo MISSING
+              fi
+            done
+
+            echo
+            echo "ALL RAB NAMES ACROSS REGULAR ZIPS"
+            echo "================================="
+            for z in *.zip; do
+              [ -f "$z" ] || continue
+              unzip -Z1 "$z" 2>/dev/null | grep -Ei '\.rab$' | sed "s#^#$z :: #" || true
+            done
+          } > out/locator.txt
+          cat out/locator.txt
+
+      - name: Upload locator
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-archive-physics-bundle-locator
+          path: out/
+          retention-days: 1
