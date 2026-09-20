@@ -1,0 +1,118 @@
+name: WoO24 live axle force field consumers
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_live_axle_force_field_consumers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find live car front/rear axle force-field consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          text_va=base+textsec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          insns=list(md.disasm(code,text_va))
+
+          live={
+              'front_base':0x18c,'rear_base':0x250,
+              'front_frict_load1':0x20c,'front_frict_k1':0x210,'front_frict_load2':0x214,'front_frict_k2':0x218,
+              'front_stiff_load1':0x21c,'front_stiff_c1':0x220,'front_stiff_load2':0x224,'front_stiff_c2':0x228,
+              'front_camber_stiff':0x22c,'front_camber_peak':0x230,'front_camber_grip':0x234,
+              'front_long_stiff':0x238,'front_long_frict':0x23c,'front_fade_start':0x240,'front_fade_stop':0x244,
+              'front_fade':0x248,'front_ref_width':0x24c,
+              'rear_frict_load1':0x2d0,'rear_frict_k1':0x2d4,'rear_frict_load2':0x2d8,'rear_frict_k2':0x2dc,
+              'rear_stiff_load1':0x2e0,'rear_stiff_c1':0x2e4,'rear_stiff_load2':0x2e8,'rear_stiff_c2':0x2ec,
+              'rear_camber_stiff':0x2f0,'rear_camber_peak':0x2f4,'rear_camber_grip':0x2f8,
+              'rear_long_stiff':0x2fc,'rear_long_frict':0x300,'rear_fade_start':0x304,'rear_fade_stop':0x308,
+              'rear_fade':0x30c,'rear_ref_width':0x310,
+          }
+          rev={}
+          for k,v in live.items(): rev.setdefault(v,[]).append(k)
+
+          hits=[]
+          for idx,ins in enumerate(insns):
+              if ins.id==0: continue
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp in rev:
+                      hits.append((idx,op.mem.disp,rev[op.mem.disp]))
+          print('DIRECT CAR-RELATIVE FIELD HITS',len(hits))
+          for idx,disp,names in hits:
+              ins=insns[idx]
+              print(f'\nHIT {names} disp={disp:#x} at={ins.address:#x} base={ins.reg_name(next(op.mem.base for op in ins.operands if op.type==X86_OP_MEM and op.mem.disp==disp))} :: {ins.mnemonic} {ins.op_str}')
+              for j in range(max(0,idx-16),min(len(insns),idx+28)):
+                  p=insns[j]; mark='>>' if j==idx else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          # Find creation/use of explicit axle pointers car+18c and car+250.
+          print('\n=== AXLE BASE POINTER FORMATION ===')
+          for idx,ins in enumerate(insns):
+              if ins.id==0:continue
+              found=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp in (0x18c,0x250):
+                      found.append(op.mem.disp)
+              if not found:continue
+              print(f'\nBASE_FORM {found} at={ins.address:#x} {ins.mnemonic} {ins.op_str}')
+              for j in range(max(0,idx-12),min(len(insns),idx+25)):
+                  p=insns[j];mark='>>' if j==idx else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          # Look for runtime axle-local force offsets in functions which first form car+18c/250.
+          axlelocal={
+             0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+             0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+             0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+             0xa0:'camber_stiff',0xa4:'camber_peak',0xa8:'camber_grip',
+             0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start',0xb8:'fade_stop',0xbc:'fade',0xc0:'ref_width'
+          }
+          # Crude function chunks split at ret/int3 runs: print functions having both base formation and axle-local accesses.
+          print('\n=== CANDIDATE FUNCTIONS WITH AXLE-LOCAL OFFSETS ===')
+          base_idxs=set()
+          for idx,ins in enumerate(insns):
+              if ins.id==0:continue
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp in (0x18c,0x250):
+                      base_idxs.add(idx)
+          for bidx in sorted(base_idxs):
+              lo=max(0,bidx-200); hi=min(len(insns),bidx+400)
+              local=[]
+              for j in range(lo,hi):
+                  p=insns[j]
+                  if p.id==0:continue
+                  for op in p.operands:
+                      if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp in axlelocal:
+                          local.append((j,p.address,op.mem.disp,axlelocal[op.mem.disp],p.mnemonic,p.op_str))
+              if local:
+                  print('\nAROUND_BASE',hex(insns[bidx].address),insns[bidx].mnemonic,insns[bidx].op_str)
+                  for x in local[:120]: print(' LOCAL',x)
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-live-axle-force-field-consumers
+          path: out/result.txt
+          retention-days: 2
