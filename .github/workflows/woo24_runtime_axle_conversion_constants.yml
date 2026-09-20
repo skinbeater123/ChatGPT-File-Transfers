@@ -1,0 +1,83 @@
+name: WoO24 runtime axle conversion constants
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_runtime_axle_conversion_constants.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode constructor constants and angle helper
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+          def readf(va):
+              try:return struct.unpack('<f',data[off(va):off(va)+4])[0]
+              except:return None
+          def readd(va):
+              try:return struct.unpack('<d',data[off(va):off(va)+8])[0]
+              except:return None
+
+          start=0x18007CBD0
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True
+          print('=== CONSTRUCTOR WITH RIP CONSTANT VALUES ===')
+          for ins in md.disasm(data[off(start):off(start)+0x320],start):
+              ann=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      va=ins.address+ins.size+op.mem.disp
+                      ann.append(f'RIP={va:#x} f32={readf(va)!r} f64={readd(va)!r}')
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} {" | ".join(ann)}')
+              if ins.mnemonic=='ret': break
+
+          helper=0x1801FCE80
+          print('\n=== HELPER 0x1801FCE80 ===')
+          for i,ins in enumerate(md.disasm(data[off(helper):off(helper)+0x300],helper)):
+              ann=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      va=ins.address+ins.size+op.mem.disp
+                      ann.append(f'RIP={va:#x} f32={readf(va)!r} f64={readd(va)!r}')
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} {" | ".join(ann)}')
+              if ins.mnemonic=='ret' and i>2: break
+
+          # Numeric transformed Sprint410 values for the force-law fields.
+          # Constants are printed above; also print common unit hypotheses for comparison.
+          print('\n=== REFERENCE UNIT CONSTANTS ===')
+          vals={
+            'lb_to_N':4.4482216152605,
+            'lbf_per_in_to_N_per_m':175.126835246476,
+            'inch_to_m':0.0254,
+            'deg_to_rad':0.017453292519943295,
+            'rad_to_deg':57.29577951308232,
+            'pi_over_180':3.141592653589793/180.0,
+          }
+          for k,v in vals.items(): print(k,v)
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-runtime-axle-conversion-constants
+          path: out/result.txt
+          retention-days: 2
