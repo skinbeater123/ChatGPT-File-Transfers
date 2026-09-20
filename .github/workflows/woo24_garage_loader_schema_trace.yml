@@ -1,0 +1,64 @@
+name: WoO24 garage loader schema trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_garage_loader_schema_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Recover garage / chassis loader schemas
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/schema.txt
+          from pathlib import Path
+          import re
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+          classes=[
+            'UIGarageScene','CarLoader','ChassisInfo','LeagueInfo','LeagueInfoWarehouse',
+            'MGIPhysicsPrefabWarehouse','PhysicsPrefabResources','PhysicsPrefabChassisData',
+            'ChassisManager','ChassisIdAsset'
+          ]
+          for cls in classes:
+              print('\n'+'='*120)
+              print('CLASS',cls)
+              print('='*120)
+              # find "class X" or "public class X"
+              pats=[rf'\bclass\s+{re.escape(cls)}\b', rf'\bstruct\s+{re.escape(cls)}\b']
+              pos=None
+              for pat in pats:
+                  m=re.search(pat,txt)
+                  if m: pos=m.start(); break
+              if pos is None:
+                  print('NOT FOUND'); continue
+              # print from namespace before through next 20k chars or next TypeDef
+              start=txt.rfind('// Namespace:',0,pos)
+              if start<0: start=max(0,pos-500)
+              nxt=txt.find('// Namespace:',pos+1)
+              if nxt<0 or nxt-start>25000: nxt=min(len(txt),start+25000)
+              print(txt[start:nxt])
+          PY
+          cat out/schema.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-garage-loader-schema
+          path: out/schema.txt
+          retention-days: 1
