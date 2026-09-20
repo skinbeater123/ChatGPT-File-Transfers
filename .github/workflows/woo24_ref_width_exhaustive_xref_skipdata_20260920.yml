@@ -1,0 +1,28 @@
+name: WoO24 ref_width exhaustive xref skipdata 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_exhaustive_xref_skipdata_20260920.yml'
+      - '.github/scripts/woo24_ref_width_exhaustive_xref_skipdata.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out13
+          mkdir -p phys_unpack out13
+          unzip -q phys.zip -d phys_unpack
+          python .github/scripts/woo24_ref_width_exhaustive_xref_skipdata.py phys_unpack/physimpl.dll out13 | tee out13/stdout.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-exhaustive-xref-skipdata
+          path: out13/
+          retention-days: 3
