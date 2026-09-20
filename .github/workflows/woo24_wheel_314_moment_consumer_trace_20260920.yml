@@ -1,0 +1,55 @@
+name: WoO24 wheel 314 moment consumer trace 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_wheel_314_moment_consumer_trace_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          python3 - <<'PY'
+          import pefile,bisect
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; d=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          def off(v):return pe.get_offset_from_rva(v-B)
+          funcs=sorted((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress)
+          starts=[a for a,b in funcs]
+          def bound(v):
+            i=bisect.bisect_right(starts,v)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=v<funcs[i][1] else None
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=d[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          ins=list(md.disasm(code,B+textsec.VirtualAddress))
+          hits=[]
+          for i,x in enumerate(ins):
+            for op in x.operands:
+              if op.type==X86_OP_MEM and op.mem.disp in (0x314,0x318,0x31c):
+                hits.append((i,x,op.mem.disp))
+          print('HITS',len(hits))
+          seen=set()
+          for i,x,disp in hits:
+            b=bound(x.address)
+            key=(b,disp)
+            if key in seen: continue
+            seen.add(key)
+            print('\n=== HIT',hex(x.address),'disp',hex(disp),'base',x.op_str,'func',b,'===')
+            for y in ins[max(0,i-25):min(len(ins),i+35)]:
+              print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          # direct callers of wheel update target
+          target=0x1800c3340
+          print('\n=== CALLERS wheel_update ===')
+          for i,x in enumerate(ins):
+            if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==target:
+              print('\nCALL',hex(x.address),'func',bound(x.address))
+              for y in ins[max(0,i-35):min(len(ins),i+80)]:
+                print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          PY
