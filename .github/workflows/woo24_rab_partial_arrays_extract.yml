@@ -1,0 +1,108 @@
+name: WoO24 RAB partial arrays extract
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rab_partial_arrays_extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch runtime and recover compiler static arrays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          find out/dump -maxdepth 3 -type f | sort > out/files.txt
+          python3 -m pip install --quiet dnfile pefile
+
+          python3 - <<'PY' > out/arrays.txt
+          from pathlib import Path
+          import dnfile, pefile, re, struct, hashlib
+
+          print('=== DUMMY DLLS ===')
+          for p in Path('out/dump').rglob('*.dll'):
+              print(p)
+
+          for p in Path('out/dump').rglob('Assembly-CSharp.dll'):
+              print('\n=== PARSING',p,'===')
+              try:
+                  dn=dnfile.dnPE(str(p))
+              except Exception as e:
+                  print('DNFAIL',e); continue
+
+              # Map Field row index -> FieldRva row
+              frva={}
+              if getattr(dn.net.mdtables,'FieldRva',None):
+                  for row in dn.net.mdtables.FieldRva.rows:
+                      try:
+                          idx=row.Field.row_index
+                      except Exception:
+                          try: idx=row.Field.row.row_index
+                          except: continue
+                      frva[idx]=row.Rva
+
+              # parent type mapping
+              field_parent={}
+              if getattr(dn.net.mdtables,'TypeDef',None):
+                  rows=dn.net.mdtables.TypeDef.rows
+                  for ti,t in enumerate(rows,1):
+                      try:
+                          fields=list(t.FieldList)
+                          for fidx in fields:
+                              try: idx=fidx.row_index
+                              except: continue
+                              field_parent[idx]=(str(t.TypeNamespace),str(t.TypeName))
+                      except: pass
+
+              print('FIELDRVA_COUNT',len(frva))
+              for idx,rva in sorted(frva.items()):
+                  try:
+                      f=dn.net.mdtables.Field.rows[idx-1]
+                      name=str(f.Name)
+                  except: name='?'
+                  parent=field_parent.get(idx,('',''))
+                  try:
+                      off=dn.get_offset_from_rva(rva)
+                      raw=dn.get_data(rva,128)
+                  except Exception as e:
+                      raw=b''
+                  print('FIELD',idx,'PARENT',parent,'NAME',name,'RVA',hex(rva),'RAW128',raw.hex())
+                  if len(raw)>=64:
+                      b=raw[:64]
+                      try:
+                          chars=''.join(chr(x) for x in struct.unpack('<32H',b))
+                          print(' UTF16_32 repr=',repr(chars))
+                          print(' UTF16_CODEUNITS=',list(struct.unpack('<32H',b)))
+                      except: pass
+
+          # Also print all 64-byte native sequences referenced by metadata FieldRVA output if script.json contains field info.
+          sj=Path('out/dump/script.json')
+          if sj.exists():
+              txt=sj.read_text(errors='ignore')
+              for term in ['PARTIAL_0','PARTIAL_1','PrivateImplementationDetails','StaticArrayInitTypeSize=64']:
+                  print('\nSCRIPT TERM',term)
+                  for m in list(re.finditer(re.escape(term),txt))[:20]:
+                      print(txt[max(0,m.start()-1000):m.end()+2000])
+          PY
+          cat out/files.txt
+          cat out/arrays.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-rab-partial-arrays
+          path: out/
+          retention-days: 1
