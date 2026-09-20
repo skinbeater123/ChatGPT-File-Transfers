@@ -1,0 +1,126 @@
+name: WoO24 LeagueInfoWarehouse loader literal trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_leaguewarehouse_loader_literal_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trace warehouse coroutine native literals
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/trace.txt
+          import json,re,pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          pe=pefile.PE('woo/GameAssembly.dll')
+          data=Path('woo/GameAssembly.dll').read_bytes()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          image_end=base+pe.OPTIONAL_HEADER.SizeOfImage
+          def off(va): return pe.get_offset_from_rva(va-base)
+
+          # method map from script.json
+          sj=json.loads(Path('out/dump/script.json').read_text())
+          addrmap={}
+          def walk(x):
+              if isinstance(x,dict):
+                  a=x.get('Address'); n=x.get('Name'); sig=x.get('Signature')
+                  if isinstance(a,str):
+                      try: av=int(a,16)
+                      except: av=None
+                      if av: addrmap[av]=(n,sig)
+                  for v in x.values(): walk(v)
+              elif isinstance(x,list):
+                  for v in x: walk(v)
+          walk(sj)
+
+          # Try to identify IL2CPP StringLiteral table refs by scanning metadata strings at indirect targets.
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          roots=[
+            ('LeagueManager.load_warehouse coroutine MoveNext',0x1803AD180),
+            ('LeagueManager.load_warehouse factory',0x1803A4A40),
+            ('LeagueManager.Init coroutine MoveNext',0x1803AA970),
+          ]
+          seen=set()
+          q=[(n,v,0) for n,v in roots]
+
+          def raw(va,n=96):
+              try:
+                  oo=off(va)
+                  return data[oo:oo+n]
+              except: return b''
+
+          def ascii_candidates(blob):
+              return [m.group().decode('ascii','ignore') for m in re.finditer(rb'[ -~]{4,}',blob)]
+
+          while q:
+              name,va,depth=q.pop(0)
+              if va in seen or depth>4: continue
+              seen.add(va)
+              try: oo=off(va)
+              except: continue
+              print('\n'+'='*140)
+              print('FUNC',name,hex(va),'DEPTH',depth,'MAP',addrmap.get(va))
+              print('='*140)
+              insns=list(md.disasm(data[oo:oo+2600],va))
+              for ins in insns:
+                  extras=[]
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      tgt=ins.operands[0].imm
+                      extras.append('CALL='+hex(tgt)+' '+repr(addrmap.get(tgt)))
+                      if base<=tgt<image_end and depth<4:
+                          nm=(addrmap.get(tgt) or (hex(tgt),None))[0] or hex(tgt)
+                          q.append((nm,tgt,depth+1))
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          rb=raw(tgt,128)
+                          extras.append('RIP='+hex(tgt)+' RAW='+rb[:32].hex())
+                          ac=ascii_candidates(rb)
+                          if ac: extras.append('ASCII='+repr(ac[:5]))
+                          # if target stores a pointer, inspect pointee
+                          if len(rb)>=8:
+                              ptr=struct.unpack('<Q',rb[:8])[0]
+                              if base<=ptr<image_end:
+                                  pr=raw(ptr,160)
+                                  pac=ascii_candidates(pr)
+                                  extras.append('PTR='+hex(ptr)+' PRAW='+pr[:32].hex())
+                                  if pac: extras.append('PASCII='+repr(pac[:8]))
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} '+' | '.join(extras))
+                  if ins.mnemonic.startswith('ret') and ins.address-va>40: break
+
+          print('\n=== GLOBAL LITERALS FILTER ===')
+          for m in re.finditer(rb'[ -~]{4,}',data):
+              s=m.group().decode('ascii','ignore')
+              if any(t.lower() in s.lower() for t in ['warehouse','leagueinfo','league info','gameyear','resource scene','globalresource','leaguewarehouse']):
+                  print(hex(m.start()),repr(s[:500]))
+          PY
+
+          cat out/trace.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-leaguewarehouse-loader-literal-trace
+          path: out/trace.txt
+          retention-days: 1
