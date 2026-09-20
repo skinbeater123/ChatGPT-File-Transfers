@@ -1,0 +1,83 @@
+name: WoO24 League warehouse resource-key extract
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_leaguewarehouse_resource_key_extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Dump closure and strings
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/result.txt
+          from pathlib import Path
+          import re, json
+
+          dump=Path('out/dump/dump.cs').read_text(errors='ignore')
+          targets=[
+            'LeagueManager.<>c__DisplayClass11_0',
+            'LeagueManager.<load_warehouse>d__11',
+            'GameYearManager',
+            'GameYear'
+          ]
+          for target in targets:
+              print('\n'+'='*120)
+              print('TARGET',target)
+              print('='*120)
+              for m in list(re.finditer(re.escape(target),dump))[:20]:
+                  # capture enclosing class block heuristically
+                  start=dump.rfind('// Namespace:',0,m.start())
+                  if start<0: start=max(0,m.start()-2000)
+                  nxt=dump.find('// Namespace:',m.end()+1)
+                  if nxt<0: nxt=min(len(dump),m.end()+20000)
+                  print(dump[start:min(nxt,start+30000)])
+
+          print('\n=== STRING LITERALS MATCHING LEAGUE/YEAR/WAREHOUSE ===')
+          sl=Path('out/dump/stringliteral.json')
+          if sl.exists():
+              data=json.loads(sl.read_text(errors='ignore'))
+              # tolerate list/dict variants
+              def walk(x):
+                  if isinstance(x,dict):
+                      s=x.get('value') or x.get('Value') or x.get('String') or x.get('string')
+                      if isinstance(s,str) and any(t in s.lower() for t in ['league','warehouse','gameyear','2023','2024','2025','resource']):
+                          print(json.dumps(x,ensure_ascii=False))
+                      for v in x.values(): walk(v)
+                  elif isinstance(x,list):
+                      for v in x: walk(v)
+              walk(data)
+          else:
+              print('NO stringliteral.json; files:', [p.name for p in Path('out/dump').iterdir()])
+
+          print('\n=== DUMP TERM NEIGHBORHOODS ===')
+          for term in ['LeagueInfoWarehouse','load_warehouse','GameYear.PRESENT','GameYear.FUTURE','GetGameYear','Resources.Load','AssetBundle']:
+              print('\nTERM',term)
+              for m in list(re.finditer(re.escape(term),dump,re.I))[:60]:
+                  print(dump[max(0,m.start()-1500):min(len(dump),m.end()+4000)])
+          PY
+
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-leaguewarehouse-resource-key
+          path: out/result.txt
+          retention-days: 1
