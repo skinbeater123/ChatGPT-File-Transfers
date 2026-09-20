@@ -1,0 +1,158 @@
+name: WoO24 resources chassis registry probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_chassis_registry_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enumerate ChassisInfo and physics-prefab registries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/chassis_registry.txt
+          import UnityPy, json, re
+          from pathlib import Path
+
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              n=getattr(v,'name',k)
+              if n.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v; break
+          if sf is None:
+              raise SystemExit('resources.assets missing')
+
+          objs=list(sf.objects.values()) if hasattr(sf.objects,'values') else list(sf.objects)
+          byid={o.path_id:o for o in objs}
+
+          TARGET={'ChassisInfo','PhysicsPrefabResources','ChassisIdAsset','Chassis','CarLoader'}
+          counts={}
+          records=[]
+
+          def get_script(d):
+              try:
+                  p=d.m_Script
+                  try:
+                      s=p.read()
+                      return getattr(s,'m_ClassName','') or getattr(s,'m_Name','') or '', getattr(s,'m_Namespace','') or '', getattr(p,'file_id',None), getattr(p,'path_id',None)
+                  except Exception:
+                      return '', '', getattr(p,'file_id',None), getattr(p,'path_id',None)
+              except Exception:
+                  return '', '', None, None
+
+          def pptr(x):
+              if isinstance(x,dict) and 'm_FileID' in x and 'm_PathID' in x:
+                  return (int(x.get('m_FileID',0)),int(x.get('m_PathID',0)))
+              return None
+
+          def resolve_local_name(treeptr):
+              q=pptr(treeptr)
+              if not q: return ''
+              fid,pid=q
+              if fid!=0 or pid not in byid: return ''
+              o=byid[pid]
+              try:
+                  d=o.read()
+                  return getattr(d,'m_Name','') or ''
+              except: return ''
+
+          for o in objs:
+              if o.type.name!='MonoBehaviour':
+                  continue
+              try: d=o.read()
+              except: continue
+              cls,ns,sfid,spid=get_script(d)
+              if cls not in TARGET:
+                  continue
+              counts[cls]=counts.get(cls,0)+1
+              try: tree=o.read_typetree()
+              except Exception as e:
+                  tree={'__typetree_error__':repr(e)}
+              name=getattr(d,'m_Name','') or ''
+              rec={'path_id':o.path_id,'class':cls,'namespace':ns,'name':name,'script_file_id':sfid,'script_path_id':spid,'size':len(o.get_raw_data()),'tree':tree}
+              records.append(rec)
+
+          print('TARGET_COUNTS',json.dumps(counts,sort_keys=True))
+          print('TOTAL_TARGET_RECORDS',len(records))
+
+          # Print concise ChassisIdAsset map first.
+          idmap={}
+          print('\n=== CHASSIS ID ASSETS ===')
+          for r in records:
+              if r['class']!='ChassisIdAsset': continue
+              t=r['tree']
+              print('PATH',r['path_id'],'NAME',repr(r['name']))
+              print(json.dumps(t,default=str,sort_keys=True))
+              # BaseIdAsset usually serializes id as string field; harvest all short strings.
+              def strings(x,path=''):
+                  out=[]
+                  if isinstance(x,dict):
+                      for k,v in x.items(): out+=strings(v,path+'.'+k if path else k)
+                  elif isinstance(x,list):
+                      for i,v in enumerate(x): out+=strings(v,f'{path}[{i}]')
+                  elif isinstance(x,str): out.append((path,x))
+                  return out
+              vals=strings(t)
+              if vals:
+                  idmap[r['path_id']]=vals
+
+          print('\n=== CHASSIS INFO ===')
+          for r in records:
+              if r['class']!='ChassisInfo': continue
+              t=r['tree']
+              print('\n--- CHASSISINFO ---')
+              print('PATH',r['path_id'],'NAME',repr(r['name']),'SIZE',r['size'])
+              # targeted fields
+              for key in ['id_asset','_resourceId','_tiresResourceId','_carloaderResourceId','_displayName']:
+                  if isinstance(t,dict) and key in t:
+                      val=t[key]
+                      print(key,repr(val))
+                      if key=='id_asset':
+                          print(' id_asset_local_name',repr(resolve_local_name(val)))
+              print('TREE',json.dumps(t,default=str,sort_keys=True))
+
+          print('\n=== PHYSICS PREFAB RESOURCES ===')
+          for r in records:
+              if r['class']=='PhysicsPrefabResources':
+                  print('\nPATH',r['path_id'],'NAME',repr(r['name']),'SIZE',r['size'])
+                  print(json.dumps(r['tree'],default=str,sort_keys=True))
+
+          print('\n=== NEXTCHASSIS CHASSIS INSTANCES ===')
+          for r in records:
+              if r['class']=='Chassis':
+                  print('\nPATH',r['path_id'],'NAME',repr(r['name']),'SIZE',r['size'])
+                  print(json.dumps(r['tree'],default=str,sort_keys=True))
+
+          print('\n=== SPRINT410 MATCHES ANY TARGET TREE ===')
+          for r in records:
+              blob=json.dumps(r['tree'],default=str)
+              if re.search(r'Sprint.?410|sprint410',blob,re.I) or re.search(r'Sprint.?410|sprint410',r['name'],re.I):
+                  print('MATCH class',r['class'],'path',r['path_id'],'name',repr(r['name']))
+                  print(blob)
+
+          Path('out/chassis_registry.json').write_text(json.dumps(records,default=str,indent=2))
+          PY
+
+          cat out/chassis_registry.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-chassis-registry
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
