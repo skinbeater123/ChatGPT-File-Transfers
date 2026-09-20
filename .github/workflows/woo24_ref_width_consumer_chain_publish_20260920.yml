@@ -1,0 +1,43 @@
+name: WoO24 ref_width consumer chain publish 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_consumer_chain_publish_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_chain
+          mkdir -p phys_unpack out_chain
+          unzip -q phys.zip -d phys_unpack
+          for item in             "runtime_consumer:.github/scripts/woo24_ref_width_runtime_consumer_trace.py"             "pointer_chain:.github/scripts/woo24_ref_width_pointer_chain_trace.py"             "runtime_plus64:.github/scripts/woo24_ref_width_runtime_plus64_trace.py"             "global_object:.github/scripts/woo24_ref_width_global_object_consumer_trace.py"             "simd_bulkcopy:.github/scripts/woo24_ref_width_simd_bulkcopy_trace.py"             "converter_table:.github/scripts/woo24_ref_width_converter_indirect_table_trace.py"
+          do
+            name="${item%%:*}"; script="${item#*:}"
+            mkdir -p "out_chain/$name"
+            python "$script" phys_unpack/physimpl.dll "out_chain/$name" | tee "out_chain/$name/stdout.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-consumer-chain
+          path: out_chain/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_ref_width_consumer_chain_20260920
+          mkdir -p forensics_output/woo24_ref_width_consumer_chain_20260920
+          cp -R out_chain/. forensics_output/woo24_ref_width_consumer_chain_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_ref_width_consumer_chain_20260920
+          git commit -m "forensics: publish WoO24 ref_width consumer chain" || exit 0
+          git push
