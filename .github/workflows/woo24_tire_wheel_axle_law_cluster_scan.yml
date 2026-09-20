@@ -1,0 +1,129 @@
+name: WoO24 tire wheel axle-law cluster scan
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tire_wheel_axle_law_cluster_scan.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan tire/wheel subsystem for axle-law clusters
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from collections import defaultdict
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+
+          lo=0x1800BE000
+          hi=0x1800C4000
+          code=data[off(lo):off(hi)]
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(code,lo))
+
+          fields={
+             0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+             0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+             0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+             0xa0:'camber_stiff',0xa4:'camber_peak_sin',0xa8:'camber_grip',
+             0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start_sin',
+             0xb8:'fade_stop_sin',0xbc:'fade',0xc0:'ref_width'
+          }
+
+          # Source xref anchors from previous atlas
+          srcanchors={
+            0x1800BEA6A:'tire.cpp',0x1800BEB22:'tire.cpp',0x1800BEB53:'tire.cpp',
+            0x1800BEC73:'tire.cpp',0x1800BEDE0:'tire.cpp',
+            0x1800BF7EF:'wheel.cpp',0x1800BFE06:'wheel.cpp',0x1800C0003:'wheel.cpp',
+            0x1800C016B:'wheel.cpp',0x1800C1766:'wheel.cpp',0x1800C1792:'wheel.cpp',
+            0x1800C2041:'new-susp.cpp',0x1800C22A6:'tire.cpp',
+            0x1800C2545:'wheel.cpp',0x1800C2572:'wheel.cpp',
+            0x1800C29EA:'tire.cpp',0x1800C33D2:'wheel.cpp'
+          }
+
+          # Segment approximate functions by RET/INT3 gaps; keep chunks with field accesses.
+          chunks=[]
+          cur=[]
+          for x in ins:
+              cur.append(x)
+              if x.id and x.mnemonic=='ret':
+                  if len(cur)>1: chunks.append(cur)
+                  cur=[]
+          if cur: chunks.append(cur)
+
+          ranked=[]
+          for ch in chunks:
+              byreg=defaultdict(list)
+              allacc=[]
+              for x in ch:
+                  if x.id==0: continue
+                  for op in x.operands:
+                      if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp in fields:
+                          reg=x.reg_name(op.mem.base)
+                          byreg[reg].append((x.address,op.mem.disp,fields[op.mem.disp],x.mnemonic,x.op_str))
+                          allacc.append((reg,x.address,op.mem.disp,fields[op.mem.disp],x.mnemonic,x.op_str))
+              best=[]
+              for reg,acc in byreg.items():
+                  unique={a[2] for a in acc}
+                  if len(unique)>=4:
+                      best.append((reg,len(unique),len(acc),sorted(unique),acc))
+              if best:
+                  anchors=[(a,n) for a,n in srcanchors.items() if ch[0].address-0x200<=a<=ch[-1].address+0x200]
+                  ranked.append((max(b[1] for b in best),ch[0].address,ch[-1].address,anchors,best,ch))
+
+          ranked.sort(reverse=True)
+          print('RANKED CLUSTERS',len(ranked))
+          for rank,(score,start,end,anchors,best,ch) in enumerate(ranked[:40],1):
+              print('\n'+'='*150)
+              print('CLUSTER',rank,'score',score,'range',hex(start),hex(end),'anchors',anchors)
+              print('='*150)
+              for reg,u,cnt,names,acc in sorted(best,key=lambda z:(-z[1],z[0])):
+                  print(' BASE',reg,'unique',u,'count',cnt,'fields',names)
+                  for a in acc:
+                      print('  ACCESS',a)
+              # full disasm only top 15
+              if rank<=15:
+                  hitaddrs={a[0] for _,_,_,_,acc in best for a in acc}
+                  for x in ch:
+                      anns=[]
+                      if x.address in hitaddrs: anns.append('FIELD_HIT')
+                      if x.address in srcanchors: anns.append('SOURCE_'+srcanchors[x.address])
+                      print(f'{" >>" if anns else "   "}{x.address:016X}: {x.mnemonic:8s} {x.op_str:70s} {" ".join(anns)}')
+
+          print('\n=== SOURCE ANCHOR CONTEXTS ===')
+          for a,n in srcanchors.items():
+              # locate nearest instruction index
+              idx=min(range(len(ins)),key=lambda i:abs(ins[i].address-a))
+              print('\nANCHOR',hex(a),n,'nearest',hex(ins[idx].address))
+              for j in range(max(0,idx-18),min(len(ins),idx+24)):
+                  x=ins[j]; ann=[]
+                  for op in x.operands if x.id else []:
+                      if op.type==X86_OP_MEM and op.mem.disp in fields:
+                          ann.append(fields[op.mem.disp])
+                  print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:65s} {" ".join(ann)}')
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tire-wheel-axle-law-clusters
+          path: out/result.txt
+          retention-days: 2
