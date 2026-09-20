@@ -1,0 +1,80 @@
+name: WoO24 Chassis physics ownership trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_chassis_physics_ownership_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract ownership classes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf woo tools out
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/ownership.txt
+          from pathlib import Path
+          import re
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+
+          def dump_class(name):
+              pats=[
+                r'(?m)^(?:public|internal|private|protected)?\s*(?:abstract )?(?:sealed )?(?:static )?(?:class|struct|interface)\s+'+re.escape(name)+r'\b',
+                r'(?m)^(?:public|internal|private|protected)?\s*(?:abstract )?(?:sealed )?(?:static )?(?:class|struct|interface)\s+[^\n{]*\.'+re.escape(name)+r'\b'
+              ]
+              hits=[]
+              for pat in pats:
+                  hits += list(re.finditer(pat,txt))
+              for m in sorted(hits,key=lambda x:x.start()):
+                  start=txt.rfind('// Namespace:',0,m.start())
+                  if start<0 or start<m.start()-2000: start=max(0,m.start()-500)
+                  end=min(len(txt),m.start()+50000)
+                  nxt=re.search(r'(?m)^// Namespace: ',txt[m.end():end])
+                  if nxt and nxt.start()>300: end=m.end()+nxt.start()
+                  print('\n'+'='*120)
+                  print('CLASS',name,'AT',m.start())
+                  print('='*120)
+                  print(txt[start:end])
+
+          for name in [
+              'Chassis','ChassisManager','ChassisInfo','CarLoader','CarLoaderAsset',
+              'CarModelLoader','CarPrefabLoader','PhysicsPrefabResources',
+              'MGIPhysicsPrefabWarehouse','CarPhysicsAsset','TrackProjectCarGraphicalObjectCreator'
+          ]:
+              dump_class(name)
+
+          print('\n=== EXACT FIELD/METHOD TERM CONTEXTS ===')
+          for term in [
+              'm_car_physics','GetCarPhysicsAsset','InstantiateCollisionAssembly',
+              'resourceId','tiresResourceId','carloaderResourceId',
+              'cars_','tires_','PhysicsPrefabs/','GetChassisInfo'
+          ]:
+              print('\n--- TERM',term,'---')
+              for m in list(re.finditer(re.escape(term),txt,re.I))[:30]:
+                  print(txt[max(0,m.start()-2500):min(len(txt),m.end()+6500)])
+          PY
+
+          cat out/ownership.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-chassis-physics-ownership-trace
+          path: out/ownership.txt
+          retention-days: 1
