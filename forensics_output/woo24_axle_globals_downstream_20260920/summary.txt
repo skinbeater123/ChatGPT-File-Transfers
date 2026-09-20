@@ -1,0 +1,7 @@
+0x18003bfc0 PhysicsConfigSetDraftingConfig
+0x18003c050 PhysicsConfigSetLitePhysicsConfig
+0x18003c0f0 PhysicsConfigSetGameConfig
+0x18003c1c0 PhysicsConfigSetAIConfig
+0x18003c320 PhysicsConfigSetAISkillConfig
+0x18003c3d0 PhysicsConfigSetPlayerConfig
+0x18003c460 PhysicsConfigSetControllerConfig
