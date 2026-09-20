@@ -1,0 +1,113 @@
+name: WoO24 live ref_width consumers 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_live_ref_width_consumers_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_live
+          mkdir -p phys_unpack out_live
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_live/summary.txt
+          import pefile,bisect
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          funcs=[]
+          try:
+            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+            for e in pe.DIRECTORY_ENTRY_EXCEPTION:
+              funcs.append((base+e.struct.BeginAddress,base+e.struct.EndAddress))
+            funcs.sort()
+          except:pass
+          def fn(a):
+            k=bisect.bisect_right(funcs,(a,2**64-1))-1
+            return funcs[k] if k>=0 and funcs[k][0]<=a<funcs[k][1] else None
+          def memops(i):
+            try:return [(j,o) for j,o in enumerate(i.operands) if o.type==X86_OP_MEM]
+            except:return []
+          # Exact offsets if a function addresses the car directly.
+          direct=[]
+          for idx,i in enumerate(ins):
+            for oi,o in memops(i):
+              if o.mem.base!=0 and o.mem.base!=X86_REG_RIP and o.mem.disp in (0x24c,0x310):
+                # read unless clearly destination-only mov store
+                direct.append((idx,i.address,o.mem.disp,o.mem.base,oi,i.mnemonic,i.op_str))
+          print('direct car-offset hits',len(direct))
+          for x in direct:print(hex(x[1]),hex(x[2]),x[5],x[6])
+          # Any +C0 access; score nearby same-base accesses against translated axle layout.
+          candidates=[]
+          for idx,i in enumerate(ins):
+            for oi,o in memops(i):
+              if o.mem.base in (0,X86_REG_RIP) or o.mem.disp!=0xc0:continue
+              br=o.mem.base
+              touches=[]
+              for q in ins[max(0,idx-100):min(len(ins),idx+160)]:
+                for _,qo in memops(q):
+                  if qo.mem.base==br and 0<=qo.mem.disp<=0xc0:
+                    touches.append((q.address,qo.mem.disp,qo.size,q.mnemonic,q.op_str))
+              offs=sorted(set(x[1] for x in touches))
+              # likely runtime axle if many fields from 0x00..0xC0 used
+              score=len(offs)
+              candidates.append((score,idx,i.address,br,oi,offs,i.mnemonic,i.op_str))
+          candidates.sort(reverse=True,key=lambda x:x[0])
+          print('plusC0 hits',len(candidates))
+          for rank,x in enumerate(candidates[:80],1):
+            print(rank,hex(x[2]),'score',x[0],'offs',[hex(v) for v in x[5]],x[6],x[7])
+          with open('out_live/direct_hits.txt','w') as o:
+            for idx,a,d,br,oi,m,ops in direct:
+              o.write(f'\n===== {a:#x} direct disp={d:#x} {m} {ops} =====\n')
+              for q in ins[max(0,idx-100):min(len(ins),idx+180)]:
+                o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          with open('out_live/plus_c0_ranked.txt','w') as o:
+            seen=set()
+            for rank,x in enumerate(candidates[:50],1):
+              sc,idx,a,br,oi,offs,m,ops=x
+              f=fn(a)
+              o.write(f'\n===== RANK {rank} {a:#x} score={sc} fn={f} {m} {ops} offs={[hex(v) for v in offs]} =====\n')
+              for q in ins[max(0,idx-120):min(len(ins),idx+220)]:
+                o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          # Function-dedup exact disasm for top candidates
+          with open('out_live/top_functions.txt','w') as o:
+            seen=set()
+            for x in candidates[:50]:
+              f=fn(x[2])
+              if not f or f in seen:continue
+              seen.add(f)
+              o.write(f'\n===== FUNCTION {f[0]:#x}-{f[1]:#x} =====\n')
+              for q in ins:
+                if f[0]<=q.address<f[1]:
+                  o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-live-ref-width-consumers
+          path: out_live/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_live_ref_width_consumers_20260920
+          mkdir -p forensics_output/woo24_live_ref_width_consumers_20260920
+          cp out_live/* forensics_output/woo24_live_ref_width_consumers_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_live_ref_width_consumers_20260920
+          git commit -m "forensics: publish WoO24 live ref_width consumers" || exit 0
+          git push
