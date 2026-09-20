@@ -1,0 +1,40 @@
+name: WoO24 ref_width native trace 20260920
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_native_trace_20260920.yml'
+      - '.github/scripts/woo24_ref_width_native_trace.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install analysis deps
+        run: python -m pip install --quiet pefile capstone
+      - name: Trace ref_width in phys binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out
+          mkdir -p phys_unpack out
+          unzip -q phys.zip -d phys_unpack
+          sha256sum phys.zip phys_unpack/* | tee out/hashes.txt
+          file phys_unpack/* | tee out/filetypes.txt
+          for f in phys_unpack/*.dll; do
+            b=$(basename "$f")
+            strings -a -t x "$f" | grep -Ei 'ref_width|frict_load|frict_k|stiff_load|stiff_c|camber_stiff|camber_grip|camber_peak|long_stiff|long_frict|magic_[bcde]|grip_fade' > "out/${b}.physics_strings.txt" || true
+            objdump -p "$f" > "out/${b}.pe.txt" || true
+          done
+          python .github/scripts/woo24_ref_width_native_trace.py phys_unpack/physimpl.dll out > out/trace_stdout.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-native-trace
+          path: out/
+          retention-days: 3
