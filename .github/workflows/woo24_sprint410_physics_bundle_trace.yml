@@ -1,0 +1,115 @@
+name: WoO24 Sprint410 physics bundle naming trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sprint410_physics_bundle_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dump IL2CPP and trace class-specific resource loading
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out woo tools
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          DUMPER=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/Il2CppDumper.dll
+          CFG=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/config.json
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$CFG"
+          mkdir -p out/dump
+          dotnet "$DUMPER" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/trace.txt
+          from pathlib import Path
+          import re
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+          meta=Path('woo/global-metadata.dat').read_bytes().decode('latin1','ignore')
+
+          def class_block(name):
+              patterns=[
+                  r'(?m)^(?:public|internal|private|protected)?\s*(?:abstract )?(?:sealed )?(?:class|struct|interface)\s+'+re.escape(name)+r'\b',
+                  r'(?m)^(?:public|internal|private|protected)?\s*(?:abstract )?(?:sealed )?(?:class|struct|interface)\s+[^\n{]*\.'+re.escape(name)+r'\b'
+              ]
+              ms=[]
+              for pat in patterns:
+                  ms += list(re.finditer(pat,txt))
+              seen=set()
+              for m in sorted(ms,key=lambda x:x.start()):
+                  if m.start() in seen: continue
+                  seen.add(m.start())
+                  start=txt.rfind('// Namespace:',0,m.start())
+                  if start < 0 or start < m.start()-2000: start=max(0,m.start()-500)
+                  end=min(len(txt),m.start()+50000)
+                  nxt=re.search(r'(?m)^// Namespace: ',txt[m.end():end])
+                  if nxt and nxt.start()>300: end=m.end()+nxt.start()
+                  print(txt[start:end])
+
+          print("=== TARGET CLASS BLOCKS ===")
+          for name in [
+              'ChassisIdAsset','ChassisInfo','PhysicsPrefabResources','MGIPhysicsPrefabWarehouse',
+              'RaceDayAssetWarehouse','CarPhysicsAsset','CarModelResource','CarResource',
+              'CarBundle','CarAsset','CarAssetWarehouse','AssetWarehouse','AssetBundleManager',
+              'ResourceBundle','ResourceManager','BundleManager'
+          ]:
+              print('\n'+'='*120+'\nCLASS '+name+'\n'+'='*120)
+              class_block(name)
+
+          print("\n=== METHOD/FIELD NEIGHBORHOODS ===")
+          terms=[
+              'GetCarPhysicsAsset','GetChassisInfo','m_car_physics','ChassisIdAsset',
+              'Sprint410Dirt','.rab','cars_','tires_','physics_','chassis_',
+              'LoadAssetBundle','LoadAssetAsync','AssetBundle.LoadFromFile',
+              'AssetBundleManager','PhysicsPrefabWarehouse','PhysicsPrefabResources'
+          ]
+          for term in terms:
+              print('\n'+'-'*120+'\nTERM '+term+'\n'+'-'*120)
+              hits=list(re.finditer(re.escape(term),txt,re.I))
+              print('DUMP_HITS',len(hits))
+              for m in hits[:20]:
+                  print(txt[max(0,m.start()-2200):min(len(txt),m.end()+5000)])
+
+              mh=list(re.finditer(re.escape(term),meta,re.I))
+              print('METADATA_STRING_HITS',len(mh))
+              for m in mh[:20]:
+                  frag=meta[max(0,m.start()-1200):min(len(meta),m.end()+2500)]
+                  # replace binary noise while preserving adjacent ASCII tokens
+                  frag=''.join(c if 32 <= ord(c) < 127 else '\n' for c in frag)
+                  print(frag)
+
+          print("\n=== ALL RAB-LIKE ASCII STRINGS FROM METADATA ===")
+          # split metadata on non-printable bytes and list useful bundle-looking tokens
+          toks=re.findall(r'[ -~]{4,}',meta)
+          for s in toks:
+              low=s.lower()
+              if '.rab' in low or 'sprint410' in low or 'cars_' in low or 'tires_' in low or ('bundle' in low and len(s)<250):
+                  print(s[:500])
+
+          print("\n=== STRINGLITERAL JSON MATCHES ===")
+          sl=Path('out/dump/stringliteral.json')
+          if sl.exists():
+              st=sl.read_text(errors='ignore')
+              for line in st.splitlines():
+                  low=line.lower()
+                  if any(k in low for k in ['.rab','sprint410','cars_','tires_','physics_','chassis_']):
+                      print(line[:2000])
+          PY
+
+          cat out/trace.txt
+
+      - name: Upload trace
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-sprint410-physics-bundle-trace
+          path: out/trace.txt
+          if-no-files-found: error
+          retention-days: 1
