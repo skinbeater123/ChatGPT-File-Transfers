@@ -1,0 +1,114 @@
+name: WoO24 Sprint410 owner map 20260920
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sprint410_owner_map_20260920.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Map every Sprint410 string to serialized owner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/sprint410_owner_map.txt
+          import UnityPy, re, json, collections
+          from pathlib import Path
+
+          env=UnityPy.load('unpack')
+          # Resolve MonoScript path id -> namespace.class from globalgamemanagers.assets.
+          script_map={}
+          for sf in env.files.values():
+              if not hasattr(sf,'objects'): continue
+              for o in sf.objects.values():
+                  if o.type.name!='MonoScript': continue
+                  try:
+                      d=o.read()
+                      cls=getattr(d,'m_ClassName','') or getattr(d,'m_Name','') or ''
+                      ns=getattr(d,'m_Namespace','') or ''
+                      asm=getattr(d,'m_AssemblyName','') or ''
+                      script_map[o.path_id]=(ns,cls,asm)
+                  except Exception:
+                      pass
+
+          sf=None
+          for k,v in env.files.items():
+              n=getattr(v,'name',k)
+              if n.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v; break
+          if sf is None: raise SystemExit('resources.assets missing')
+
+          owners=[]
+          for o in sf.objects.values():
+              raw=bytes(o.get_raw_data())
+              if b'Sprint410' not in raw and b'sprint410' not in raw.lower():
+                  continue
+              strings=[x.decode('ascii','ignore') for x in re.findall(rb'[ -~]{4,}',raw)]
+              sprint_strings=[s for s in strings if re.search(r'sprint.?410',s,re.I)]
+              rec={
+                  'path_id':o.path_id,
+                  'type':o.type.name,
+                  'size':len(raw),
+                  'strings':strings,
+                  'sprint_strings':sprint_strings,
+              }
+              if o.type.name=='MonoBehaviour' and len(raw)>=28:
+                  fid=int.from_bytes(raw[16:20],'little',signed=True)
+                  pid=int.from_bytes(raw[20:28],'little',signed=True)
+                  rec['script_file_id']=fid
+                  rec['script_path_id']=pid
+                  rec['script']=script_map.get(pid)
+                  # first bytes may point to owning GO
+                  rec['gameobject_file_id']=int.from_bytes(raw[0:4],'little',signed=True)
+                  rec['gameobject_path_id']=int.from_bytes(raw[4:12],'little',signed=True)
+              owners.append(rec)
+
+          print('OWNER_COUNT',len(owners))
+          for r in owners:
+              print('\n--- OWNER ---')
+              print('path',r['path_id'],'type',r['type'],'size',r['size'])
+              if 'script_path_id' in r:
+                  print('script_ptr',r['script_file_id'],r['script_path_id'],'script',r['script'])
+                  print('gameobject_ptr',r['gameobject_file_id'],r['gameobject_path_id'])
+              print('SPRINT_STRINGS',json.dumps(r['sprint_strings']))
+              print('ALL_STRINGS',json.dumps(r['strings']))
+
+          # Directly look for likely scene/resource names in all resources raw bytes.
+          allraw=Path('unpack/resources.assets').read_bytes()
+          needles=[
+              b'LeagueStoreScene',b'Sprint410Dirt',b'Sprint410Paved',
+              b'Wingless_Sprint410',b'PhysicsPrefabs/',b'tires_Sprint410',
+              b'cars_sprint410',b'Sprint410Physics',b'Sprint410DirtPhysics'
+          ]
+          print('\n=== FILE-LEVEL STRING NEIGHBORHOODS ===')
+          for needle in needles:
+              print('\nNEEDLE',needle.decode('ascii','ignore'))
+              for m in list(re.finditer(re.escape(needle),allraw))[:100]:
+                  lo=max(0,m.start()-180); hi=min(len(allraw),m.end()+300)
+                  chunk=allraw[lo:hi]
+                  printable=''.join(chr(c) if 32<=c<127 else '.' for c in chunk)
+                  print(hex(m.start()),printable)
+
+          Path('out/sprint410_owner_map.json').write_text(json.dumps(owners,default=str,indent=2))
+          PY
+
+          cat out/sprint410_owner_map.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-sprint410-owner-map
+          path: out/
+          retention-days: 1
