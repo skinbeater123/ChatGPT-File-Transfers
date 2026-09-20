@@ -177,3 +177,5 @@ jobs:
           path: woo24_out/
           if-no-files-found: error
           retention-days: 1
+
+# trigger native wheel-config probe
