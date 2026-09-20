@@ -1,0 +1,56 @@
+name: WoO24 ref_width static target resolve 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_static_target_resolve_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out9
+          mkdir -p phys_unpack out9
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out9/resolve.txt
+          import pefile,struct
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          slot=0x18026c698; rva=slot-base; off=pe.get_offset_from_rva(rva)
+          q=struct.unpack_from('<Q',raw,off)[0]
+          print('base',hex(base),'slot',hex(slot),'rva',hex(rva),'fileoff',hex(off),'raw_qword',hex(q))
+          print('context')
+          for x in range(off-0x80,off+0x100,8):
+              v=struct.unpack_from('<Q',raw,x)[0]
+              try: rv=pe.get_rva_from_offset(x)
+              except: rv=None
+              print(hex(x),hex(base+rv) if rv is not None else None,hex(v))
+          print('relocs touching slot/context')
+          if hasattr(pe,'DIRECTORY_ENTRY_BASERELOC'):
+              for block in pe.DIRECTORY_ENTRY_BASERELOC:
+                  for e in block.entries:
+                      va=base+e.rva
+                      if slot-0x100 <= va <= slot+0x100:
+                          print('reloc',hex(va),'type',e.type)
+          # find qword equal to raw target / target VA references
+          for label,val in [('raw',q),('slot',slot)]:
+              pat=struct.pack('<Q',val); st=0
+              while 1:
+                  o=raw.find(pat,st)
+                  if o<0: break
+                  try: rr=pe.get_rva_from_offset(o); va=base+rr
+                  except: va=None
+                  print('qword_hit',label,hex(o),hex(va) if va else None)
+                  st=o+1
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-static-target-resolve
+          path: out9/
+          retention-days: 3
