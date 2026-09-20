@@ -1,0 +1,106 @@
+name: WoO24 ChassisManager native registry trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_chassismanager_registry_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Annotate ChassisManager/GetChassisInfo and LeagueInfo OnLoad
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/trace.txt
+          import json,re,pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          pe=pefile.PE('woo/GameAssembly.dll')
+          data=Path('woo/GameAssembly.dll').read_bytes()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+
+          # address -> method name from script.json
+          addrmap={}
+          sj=json.loads(Path('out/dump/script.json').read_text())
+          def walk(x):
+              if isinstance(x,dict):
+                  a=x.get('Address')
+                  n=x.get('Name')
+                  sig=x.get('Signature')
+                  if isinstance(a,str):
+                      try: addr=int(a,16)
+                      except: addr=None
+                      if addr: addrmap[addr]=(n,sig)
+                  for v in x.values(): walk(v)
+              elif isinstance(x,list):
+                  for v in x: walk(v)
+          walk(sj)
+
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          roots={
+            'ChassisManager.GetChassisInfo':0x1802699A0,
+            'LeagueInfo.OnLoad':0x1803A1D20,
+            'LeagueInfo.OnEnable':0x1803A1CF0,
+            'ChassisInfo.IChassisInfo.get_id':0x1803FF4A0,
+          }
+          # add class methods mentioning Provider/Resource/League warehouse from dump
+          dump=Path('out/dump/dump.cs').read_text(errors='ignore')
+          print('=== RELATED MANAGED DECLARATIONS ===')
+          for term in ['ChassisManager','LeagueInfoWarehouse','MGIProviderManager','ProviderManager','ChassisInfoWarehouse','LeagueDataStore']:
+              print('\nTERM',term)
+              for m in list(re.finditer(re.escape(term),dump))[:50]:
+                  print(dump[max(0,m.start()-700):min(len(dump),m.end()+2200)])
+
+          print('\n=== DISASSEMBLY ===')
+          seen=set(); q=[(name,va,0) for name,va in roots.items()]
+          while q:
+              name,va,depth=q.pop(0)
+              if va in seen or depth>3: continue
+              seen.add(va)
+              try: oo=off(va)
+              except: continue
+              print('\n'+'='*120)
+              print(name,hex(va),'DEPTH',depth,'MAP',addrmap.get(va))
+              print('='*120)
+              for ins in md.disasm(data[oo:oo+1200],va):
+                  ex=[]
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      tgt=ins.operands[0].imm
+                      ex.append('CALL='+hex(tgt)+' '+repr(addrmap.get(tgt)))
+                      if base<=tgt<base+pe.OPTIONAL_HEADER.SizeOfImage and depth<3:
+                          nm=addrmap.get(tgt,(hex(tgt),None))[0] or hex(tgt)
+                          q.append((nm,tgt,depth+1))
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          ex.append('RIP='+hex(tgt))
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:50s} ' + ' | '.join(ex))
+                  if ins.mnemonic.startswith('ret') and ins.address-va>20: break
+          PY
+          cat out/trace.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-chassismanager-registry-trace
+          path: out/trace.txt
+          retention-days: 1
