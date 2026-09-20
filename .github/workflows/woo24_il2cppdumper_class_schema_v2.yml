@@ -1,0 +1,78 @@
+name: WoO24 Il2CppDumper class schema v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_il2cppdumper_class_schema_v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Il2CppDumper and extract target classes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out woo tools
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0
+          DUMPER=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/Il2CppDumper.dll
+          CFG=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0/config.json
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$CFG"
+          mkdir -p out/dump
+          dotnet "$DUMPER" woo/GameAssembly.dll woo/global-metadata.dat out/dump
+
+          python3 - <<'PY' > out/target_classes.txt
+          from pathlib import Path
+          import re
+          p=Path('out/dump/dump.cs')
+          txt=p.read_text(errors='ignore')
+          targets=[
+              'CarPhysicsAsset','PhysChassisAsset','PhysWheelAsset','PhysAxleAsset',
+              'PhysEngineAsset','PhysTransmissionAsset','ChassisIdAsset',
+              'ChassisInfo','LitePhysicsAsset','LitePhysicsHangoutAsset','DrivingAidsAsset'
+          ]
+          for t in targets:
+              print('\n'+'='*120)
+              print('TARGET',t)
+              print('='*120)
+              ms=list(re.finditer(r'(?m)^(?:public|internal|private|protected)?\s*(?:abstract )?(?:sealed )?(?:class|struct|interface)\s+'+re.escape(t)+r'\b',txt))
+              if not ms:
+                  print('NOT_FOUND')
+                  continue
+              for m in ms:
+                  start=txt.rfind('// Namespace:',0,m.start())
+                  if start < 0 or start < m.start()-2000:
+                      start=max(0,m.start()-300)
+                  end=min(len(txt),m.start()+30000)
+                  nxt=re.search(r'(?m)^// Namespace: ',txt[m.end():end])
+                  if nxt and nxt.start()>200:
+                      end=m.end()+nxt.start()
+                  print(txt[start:end])
+
+          for term in ['stiff_load1','frict_load1','long_stiff','grip_lf','stiff_lf','rear_lat_grip_f','yaw_control_f']:
+              print('\n'+'-'*120)
+              print('TERM',term)
+              for m in list(re.finditer(re.escape(term),txt))[:8]:
+                  print(txt[max(0,m.start()-2200):min(len(txt),m.end()+4500)])
+          PY
+
+          cat out/target_classes.txt
+
+      - name: Upload concise schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-il2cppdumper-class-schema-v2
+          path: |
+            out/target_classes.txt
+            out/dump/dump.cs
+            out/dump/script.json
+          if-no-files-found: warn
+          retention-days: 1
