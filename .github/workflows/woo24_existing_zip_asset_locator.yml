@@ -1,4 +1,5 @@
 name: WoO24 existing ZIP asset locator
+# Triggered inventory pass.
 
 on:
   push:
