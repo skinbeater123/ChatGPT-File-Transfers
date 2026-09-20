@@ -1,0 +1,82 @@
+name: WoO24 runtime axle constructor decode
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_runtime_axle_constructor_decode.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode runtime axle constructor and xrefs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          dll='phys_unpack/physimpl.dll'
+          data=Path(dll).read_bytes()
+          pe=pefile.PE(dll)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va):
+              return pe.get_offset_from_rva(va-base)
+
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          text_va=base+textsec.VirtualAddress
+
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          insns=list(md.disasm(code,text_va))
+
+          target=0x18007CBD0
+          print('=== CALL XREFS TO 0x18007CBD0 ===')
+          for idx,ins in enumerate(insns):
+              if ins.id==0: continue
+              if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM and ins.operands[0].imm==target:
+                  print(hex(ins.address))
+                  for j in range(max(0,idx-10),min(len(insns),idx+14)):
+                      p=insns[j]; mark='>>' if j==idx else '  '
+                      print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          print('\n=== RUNTIME AXLE CONSTRUCTOR 0x18007CBD0 ===')
+          m2=Cs(CS_ARCH_X86,CS_MODE_64); m2.detail=True
+          count=0
+          for ins in m2.disasm(data[off(target):off(target)+0x1000],target):
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}')
+              count += 1
+              if ins.mnemonic=='ret' and count>5:
+                  break
+
+          print('\n=== NEARBY FUNCTIONS BEFORE/AFTER ===')
+          for a in [0x18007C900,0x18007CA00,0x18007CB00,0x18007CBD0,0x18007CD00,0x18007CE00,0x18007CF00]:
+              print('\n--',hex(a),'--')
+              try:
+                  o=off(a)
+              except: continue
+              m3=Cs(CS_ARCH_X86,CS_MODE_64); m3.detail=True
+              n=0
+              for ins in m3.disasm(data[o:o+0x300],a):
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}')
+                  n+=1
+                  if ins.mnemonic=='ret' and n>5: break
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-runtime-axle-constructor
+          path: out/result.txt
+          retention-days: 2
