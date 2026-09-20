@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   trace:
@@ -177,3 +177,15 @@ jobs:
           name: woo24-ref-width-native-dataflow
           path: out/
           retention-days: 3
+      - name: Publish forensic outputs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_ref_width_native_dataflow_20260920
+          mkdir -p forensics_output/woo24_ref_width_native_dataflow_20260920
+          cp out/* forensics_output/woo24_ref_width_native_dataflow_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_ref_width_native_dataflow_20260920
+          git commit -m "forensics: publish WoO24 ref_width native dataflow" || exit 0
+          git push
