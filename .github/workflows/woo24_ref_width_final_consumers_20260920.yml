@@ -1,0 +1,52 @@
+name: WoO24 ref_width final consumers F4180 F3CE0
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_final_consumers_20260920.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - name: Disassemble final consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out
+          mkdir -p phys_unpack out
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY'
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          p='phys_unpack/physimpl.dll'; pe=pefile.PE(p); raw=open(p,'rb').read(); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          for target,name in [(0x1800f4180,'f4180'),(0x1800f3ce0,'f3ce0')]:
+              off=pe.get_offset_from_rva(target-base)
+              ins=list(md.disasm(raw[off:off+0x1400],target))
+              first=[]
+              for i in ins:
+                  first.append(i)
+                  if i.mnemonic=='ret' and i.address>target+0x20: break
+              with open(f'out/{name}.txt','w') as f:
+                  for i in first: f.write(f'{i.address:#018x}: {i.mnemonic:8s} {i.op_str}\n')
+              with open(f'out/{name}_r9_focus.txt','w') as f:
+                  for idx,i in enumerate(first):
+                      op=i.op_str.lower()
+                      if 'r9' in op or any(x in op for x in [' + 0x10]',' + 0x14]',' + 0x18]']):
+                          f.write(f'\nTARGET {i.address:#x}: {i.mnemonic} {i.op_str}\n')
+                          for q in first[max(0,idx-10):min(len(first),idx+24)]:
+                              f.write(f'  {q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+          dest="forensics/woo24_ref_width_final_consumers_20260920"
+          rm -rf "$dest"; mkdir -p "$dest"; cp out/* "$dest/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$dest"; git commit -m "forensics: publish WoO24 ref_width final consumers"; git push
