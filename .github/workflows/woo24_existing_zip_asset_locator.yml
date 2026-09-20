@@ -44,6 +44,13 @@ jobs:
           } > out/target_matches.txt
 
           cat out/target_matches.txt
+          echo
+          echo "TARGETS BY ZIP"
+          echo "=============="
+          for z in "WOO24.zip" "globalgamemanagers.zip" "phys.zip" "a01_sprintcar.zip" "sprintcar 2 .zip"; do
+            echo "--- $z ---"
+            unzip -l "$z" 2>/dev/null | grep -Ei 'sharedassets[0-9]*\.assets(\.resS)?$|sharedassets[0-9]*\.resource$|globalgamemanagers(\.assets)?$|resources\.assets(\.resS)?$|resources\.resource$|level[0-9]+$|PhysWheel|PhysAxle|CarPhysicsAsset|PhysChassis|PhysEngine|PhysTransmission' || true
+          done
 
       - name: Upload derived inventory
         uses: actions/upload-artifact@v4
