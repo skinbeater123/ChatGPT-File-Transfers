@@ -1,0 +1,66 @@
+name: WoO24 ref_width consumer role classification
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_consumer_role_20260920.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - name: Classify direct callers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out
+          mkdir -p phys_unpack out
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY'
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_IMM
+          p='phys_unpack/physimpl.dll'; pe=pefile.PE(p); raw=open(p,'rb').read(); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+              if s.Characteristics & 0x20000000:
+                  ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          targets={0x1800222d0:'front_refwidth_mutator',0x1800c6ec0:'rear_refwidth_forwarder'}
+          for target,name in targets.items():
+              hits=[]
+              for idx,i in enumerate(ins):
+                  if i.mnemonic=='call':
+                      for op in i.operands:
+                          if op.type==X86_OP_IMM and op.imm==target:
+                              hits.append((idx,i.address))
+              with open(f'out/{name}_callers.txt','w') as f:
+                  f.write(f'target {target:#x} callers {len(hits)}\n')
+                  for idx,a in hits:
+                      f.write(f'\n===== CALL {a:#x} =====\n')
+                      for q in ins[max(0,idx-60):min(len(ins),idx+60)]:
+                          f.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          # nearby exports
+          ex=[]
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+              for e in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                  if e.name:
+                      ex.append((base+e.address,e.name.decode(errors='replace')))
+          with open('out/nearby_exports.txt','w') as f:
+              for target,name in targets.items():
+                  f.write(f'\n{name} {target:#x}\n')
+                  for va,n in sorted(ex,key=lambda z:abs(z[0]-target))[:20]:
+                      f.write(f'{va:#x} delta={va-target:+#x} {n}\n')
+          PY
+          dest="forensics/woo24_ref_width_consumer_role_20260920"
+          rm -rf "$dest"; mkdir -p "$dest"; cp out/* "$dest/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$dest"; git commit -m "forensics: classify WoO24 ref_width consumers"; git push
