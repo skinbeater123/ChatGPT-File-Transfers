@@ -1,0 +1,96 @@
+name: WoO24 managed physics schema extract
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_managed_physics_schema_extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract WoO24 managed physics class schemas
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out woo
+          unzip -q WOO24.zip -d woo || true
+
+          echo "=== ZIP CONTENTS ===" > out/schema.txt
+          unzip -l WOO24.zip >> out/schema.txt || true
+          echo >> out/schema.txt
+
+          python3 - <<'PY' >> out/schema.txt
+          from pathlib import Path
+          import re
+
+          roots=[Path('woo')]
+          targets=[
+              'CarPhysicsAsset','PhysChassisAsset','PhysWheelAsset','PhysAxleAsset',
+              'PhysEngineAsset','PhysTransmissionAsset'
+          ]
+          text_files=[]
+          for root in roots:
+              for p in root.rglob('*'):
+                  if p.is_file() and p.stat().st_size < 100_000_000:
+                      try:
+                          txt=p.read_text(errors='ignore')
+                      except Exception:
+                          continue
+                      if any(t in txt for t in targets):
+                          text_files.append((p,txt))
+
+          print("=== MATCHING TEXT FILES ===")
+          for p,_ in text_files:
+              print(p)
+
+          # Extract generous neighborhoods and class blocks from dump-like files.
+          for target in targets:
+              print("\n" + "="*100)
+              print("TARGET",target)
+              print("="*100)
+              found=False
+              for p,txt in text_files:
+                  # class declaration block
+                  pat=re.compile(r'(?ms)(^|\n)(?:\[[^\n]*\]\s*\n)*[^\n]{0,200}\bclass\s+'+re.escape(target)+r'\b.*?(?=\n(?:\[[^\n]*\]\s*\n)*[^\n]{0,200}\bclass\s+\w+\b|\Z)')
+                  m=pat.search(txt)
+                  if m:
+                      found=True
+                      print(f"--- {p} CLASS BLOCK ---")
+                      block=m.group(0)
+                      print(block[:30000])
+                  # plain neighborhoods for non-C# metadata
+                  for m2 in re.finditer(re.escape(target),txt):
+                      if m and m.start() <= m2.start() <= m.end():
+                          continue
+                      found=True
+                      a=max(0,m2.start()-2500); b=min(len(txt),m2.end()+7000)
+                      print(f"--- {p} NEIGHBORHOOD @{m2.start()} ---")
+                      print(txt[a:b])
+                      break
+              if not found:
+                  print("NO_TEXT_MATCH")
+          PY
+
+          # Grep recursively as fallback.
+          {
+            echo
+            echo "=== RECURSIVE GREP FALLBACK ==="
+            grep -RInaE 'CarPhysicsAsset|PhysChassisAsset|PhysWheelAsset|PhysAxleAsset|PhysEngineAsset|PhysTransmissionAsset|stiff_load1|stiff_c1|long_stiff|frict_load1|grip_lf|stiff_lf' woo 2>/dev/null | head -5000 || true
+          } >> out/schema.txt
+
+          cat out/schema.txt
+
+      - name: Upload derived schema
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-managed-physics-schema
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
