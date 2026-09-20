@@ -14,10 +14,10 @@ for s in pe.sections:
 print('decoded_insns',len(ins),'first',hex(ins[0].address),'last',hex(ins[-1].address))
 front=0x180273720; rear=0x180273660
 front_ref=front+0xb8; rear_ref=rear+0xb8
-ranges=[('rear',rear,rear+0xbc),('front',front,front+0xbc)]
+ranges=[('rear',rear,rear+0xbc),('front',front,front+0xbc)]\n\ndef ops(i):\n  try: return i.operands\n  except Exception: return []
 refs=[]
 for idx,i in enumerate(ins):
-  for op in i.operands:
+  for op in ops(i):
     t=None
     if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
       t=i.address+i.size+op.mem.disp
@@ -54,7 +54,7 @@ with open(os.path.join(out,'createcar_direct.txt'),'w') as f:
 # scan all RIP refs to wider config globals, with focus createcar-related upper text too
 wide=[]
 for idx,i in enumerate(ins):
-  for op in i.operands:
+  for op in ops(i):
     if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
       t=i.address+i.size+op.mem.disp
       if 0x180273000<=t<0x180274000:
