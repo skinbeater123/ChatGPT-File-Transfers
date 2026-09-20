@@ -1,0 +1,34 @@
+name: WoO24 RAB constant bytes
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rab_constant_bytes.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read compiler constant bytes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir woo
+          unzip -q WOO24.zip -d woo
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, hashlib
+          p=next(Path('woo').rglob('global-metadata.dat'))
+          b=p.read_bytes()
+          print('METADATA_SIZE',len(b), 'SHA256',hashlib.sha256(b).hexdigest())
+          for name,off in [('PARTIAL_1_BF755',0x49BCE0),('PARTIAL_0_FCF8',0x4BE150)]:
+              raw=b[off:off+64]
+              print(name,'OFFSET',hex(off),'HEX',raw.hex())
+              print(name,'U16',list(struct.unpack('<32H',raw)))
+              print(name,'CHARS_REPR',repr(''.join(chr(x) for x in struct.unpack('<32H',raw))))
+          PY
