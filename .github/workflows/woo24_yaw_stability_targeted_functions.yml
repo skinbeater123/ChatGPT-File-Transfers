@@ -1,0 +1,155 @@
+name: WoO24 yaw stability targeted functions
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_yaw_stability_targeted_functions.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Disassemble exact tyre and yaw functions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_out
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_out/source_hashes.txt
+
+          python3 - <<'PY' > woo24_out/targeted_functions.txt
+          import bisect, re, struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_IMM,X86_OP_MEM,X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll')
+          raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          funcs=sorted(set(
+              (base+e.struct.BeginAddress,base+e.struct.EndAddress)
+              for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[])
+              if e.struct.EndAddress>e.struct.BeginAddress
+          ))
+          starts=[f[0] for f in funcs]
+          def containing(addr):
+              i=bisect.bisect_right(starts,addr)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=addr<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          text_ins=list(md.disasm(
+              pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),
+              base+text.VirtualAddress
+          ))
+
+          def ops(x):
+              if getattr(x,'id',0)==0:return []
+              try:return x.operands
+              except:return []
+          def rips(x):
+              out=[]
+              for o in ops(x):
+                  if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP:
+                      out.append(x.address+x.size+o.mem.disp)
+              return out
+
+          xrefs={
+            'front_rear_grip_config':0x1800270AE,
+            'load_stiffness_config':0x180038F1B,
+            'arcade_yaw_config':0x18003A867,
+            'rear_lat_grip_yaw_config':0x180059727,
+            'front_rear_grip_runtime_A':0x18009348D,
+            'front_rear_grip_runtime_B':0x180094165,
+            'tire_force_slip_pressure':0x1800C307A,
+            'wheel_selfalign_runtime':0x1800C434C,
+          }
+
+          # Build printable-string VA map, including nearby config names.
+          strmap={}
+          for m in re.finditer(rb'[ -~]{4,}',raw):
+              s=m.group().decode('ascii','ignore')
+              if re.search(r'grip|stiff|slip|yaw|steer|align|tire|tyre|pressure|compound|camber|arcade|stabil|oversteer|drift|load|force',s,re.I):
+                  try:strmap[base+pe.get_rva_from_offset(m.start())]=s
+                  except:pass
+
+          def annotation(x):
+              ext=[]
+              for t in rips(x):
+                  if t in strmap: ext.append('STR='+strmap[t])
+                  try:
+                      b=pe.get_data(t-base,8)
+                      if len(b)>=4:
+                          fv=struct.unpack('<f',b[:4])[0]
+                          if fv==fv and abs(fv)<1e6:
+                              ext.append(f'f32@0x{t:X}={fv:.9g}')
+                          uv=struct.unpack('<I',b[:4])[0]
+                          ext.append(f'u32=0x{uv:08X}')
+                  except:pass
+              return ' ; '+' | '.join(ext) if ext else ''
+
+          selected=[]
+          print('WOO24 TARGETED TYRE / YAW FUNCTIONS')
+          print('='*100)
+          for label,addr in xrefs.items():
+              f=containing(addr)
+              print(f'XREF {label:34s} 0x{addr:X} -> func={f}')
+              if f and f not in selected:selected.append(f)
+
+          for label,addr in xrefs.items():
+              f=containing(addr)
+              if not f:continue
+              st,en=f
+              print(f'\n### {label}  XREF=0x{addr:X}  FUNCTION 0x{st:X}-0x{en:X} size={en-st}')
+              d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+              for x in d.disasm(pe.get_data(st-base,en-st),st):
+                  mark='>>' if x.address==addr else '  '
+                  print(f'{mark} 0x{x.address:X}: {x.mnemonic:<8} {x.op_str}{annotation(x)}')
+
+          targets={f[0] for f in selected}
+          print('\n### DIRECT CALLERS OF TARGET FUNCTIONS')
+          for x in text_ins:
+              if x.mnemonic!='call':continue
+              oo=ops(x)
+              if len(oo)==1 and oo[0].type==X86_OP_IMM and oo[0].imm in targets:
+                  print(f'0x{x.address:X} -> 0x{oo[0].imm:X} caller={containing(x.address)}')
+
+          # Functions around diagnostic yaw-error / oversteer strings.
+          print('\n### YAW / OVERSTEER DIAGNOSTIC STRING FUNCTIONS')
+          for needle in [
+              b'get_yaw_error: desired_yaw_rate=%f yaw_rate=%f ::: yaw_error=%f',
+              b'get_oversteer: tan_drift=%f drift_f=%f ::: oversteer=%f'
+          ]:
+              off=raw.find(needle)
+              if off<0:continue
+              sva=base+pe.get_rva_from_offset(off)
+              for x in text_ins:
+                  if sva in rips(x):
+                      f=containing(x.address)
+                      print(f'{needle.decode()} stringVA=0x{sva:X} xref=0x{x.address:X} func={f}')
+                      if f:
+                          st,en=f
+                          d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+                          for y in d.disasm(pe.get_data(st-base,en-st),st):
+                              print(f'  0x{y.address:X}: {y.mnemonic:<8} {y.op_str}{annotation(y)}')
+          PY
+
+          sed -n '1,40000p' woo24_out/targeted_functions.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-yaw-stability-targeted-functions
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
