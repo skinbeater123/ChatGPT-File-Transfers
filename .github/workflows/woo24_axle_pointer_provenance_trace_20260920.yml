@@ -1,0 +1,114 @@
+name: WoO24 axle pointer provenance trace 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_pointer_provenance_trace_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_prov
+          mkdir -p phys_unpack out_prov
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_prov/summary.txt
+          import pefile,bisect
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          funcs=[]
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          for e in pe.DIRECTORY_ENTRY_EXCEPTION: funcs.append((base+e.struct.BeginAddress,base+e.struct.EndAddress))
+          funcs.sort()
+          def fn(a):
+            k=bisect.bisect_right(funcs,(a,2**64-1))-1
+            return funcs[k] if k>=0 and funcs[k][0]<=a<funcs[k][1] else None
+          def ops(i):
+            try:return i.operands
+            except:return []
+          sites=[]
+          for idx,i in enumerate(ins):
+            if i.mnemonic!='lea':continue
+            for o in ops(i):
+              if o.type==X86_OP_MEM and o.mem.base not in (0,X86_REG_RIP) and o.mem.index==0 and o.mem.disp in (0x18c,0x250):
+                sites.append((idx,i,o.mem.disp))
+          print('axle pointer LEA sites',len(sites))
+          with open('out_prov/sites_and_calls.txt','w') as o:
+            for idx,i,d in sites:
+              f=fn(i.address); o.write(f'\n===== site {i.address:#x} disp={d:#x} fn={f} {i.mnemonic} {i.op_str} =====\n')
+              # inspect next 35 instructions and record direct calls
+              for q in ins[idx:min(len(ins),idx+40)]:
+                o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          # Candidate direct callees in 40-insn window after axle-pointer LEAs.
+          tgts={}
+          for idx,i,d in sites:
+            for q in ins[idx:min(len(ins),idx+40)]:
+              if q.mnemonic=='call':
+                oo=ops(q)
+                if oo and oo[0].type==X86_OP_IMM:
+                  tgts.setdefault(oo[0].imm,[]).append((i.address,d,q.address))
+          print('direct candidate callees',len(tgts))
+          with open('out_prov/candidate_callees.txt','w') as o:
+            for t,orig in sorted(tgts.items()):
+              f=fn(t)
+              # determine whether function reads +c0 via any non-RIP base
+              c0=[]
+              if f:
+                for q in ins:
+                  if not(f[0]<=q.address<f[1]):continue
+                  for op in ops(q):
+                    if op.type==X86_OP_MEM and op.mem.base not in (0,X86_REG_RIP) and op.mem.disp==0xc0:
+                      c0.append((q.address,q.mnemonic,q.op_str))
+              o.write(f'\n===== target {t:#x} fn={f} origins={orig} c0={c0} =====\n')
+              if f:
+                for q in ins:
+                  if f[0]<=q.address<f[1]:
+                    o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          # Also trace exact car constructor continuation 0xFB0E0 recursively one hop.
+          roots=[base+0xfb0e0]
+          seen=set()
+          with open('out_prov/fb0e0_calltree.txt','w') as o:
+            frontier=[(roots[0],0)]
+            while frontier:
+              t,depth=frontier.pop(0)
+              if t in seen or depth>2:continue
+              seen.add(t);f=fn(t)
+              if not f:continue
+              o.write(f'\n===== depth={depth} fn {f[0]:#x}-{f[1]:#x} =====\n')
+              for q in ins:
+                if f[0]<=q.address<f[1]:
+                  o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+                  if q.mnemonic=='call':
+                    oo=ops(q)
+                    if oo and oo[0].type==X86_OP_IMM and base<=oo[0].imm<base+0x200000:
+                      frontier.append((oo[0].imm,depth+1))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-pointer-provenance
+          path: out_prov/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_axle_pointer_provenance_20260920
+          mkdir -p forensics_output/woo24_axle_pointer_provenance_20260920
+          cp out_prov/* forensics_output/woo24_axle_pointer_provenance_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_axle_pointer_provenance_20260920
+          git commit -m "forensics: publish WoO24 axle pointer provenance" || exit 0
+          git push
