@@ -1,0 +1,229 @@
+0x2245F8 blackbox: using %.1f laps/set-of-tires instead of %.1f
+0x224720 tire_wear_per_lap > 0
+0x224AB8 idx >= 0 && idx < ARRAY_N(m_wheel)
+0x224BB0 can_force_yield(car_num)
+0x224D60 %5.5d/%s: GetMostUrgentContactingCar: car=%d length=%f lon=%f t=%f estimated_contact_time=%f relative_speed=%fMPH
+0x2257D8 front_grip
+0x2257E8 rear_grip
+0x2257F8 front_downforce
+0x225808 rear_downforce
+0x225818 brake_force
+0x2259D8 CONTROLControlSetRumbleForce
+0x2259F8 BRIDGE_FPTR(CONTROL,ControlSetRumbleForce) != NULL
+0x225A30 CONTROLControlSetForceFeedback
+0x225A50 BRIDGE_FPTR(CONTROL,ControlSetForceFeedback) != NULL
+0x225A88 CONTROLControlClearForces
+0x225AA8 BRIDGE_FPTR(CONTROL,ControlClearForces) != NULL
+0x225D18 traverse_entire/pending
+0x225E50 spline_terrain_properties_modifier(%s): grip_shift_f=%.3f l2_grip=%.3f l4_grip=%.3f new_grip=%.3f
+0x225EE9 %s[%d]: lat=%+6.2f grip=%.2f drag=%.2f fluct=%.2f
+0x226DC0 PXApplyForce
+0x226DD0 BRIDGE_FPTR(PX,ApplyForce) != NULL
+0x2276D0 wheel_lock
+0x227808 grip_lr
+0x227810 grip_lf
+0x227818 grip_rr
+0x227820 grip_rf
+0x227848 stiff_lr
+0x227858 stiff_lf
+0x227868 stiff_rr
+0x227878 stiff_rf
+0x2278B8 dirt_grip_factor
+0x2278D0 force_limit
+0x227910 grass_grip_factor
+0x227928 grip_factor
+0x227938 max_tirewear_drag
+0x227950 min_wear_grip
+0x227960 normal_tire_pressure_l
+0x227978 normal_tire_pressure_r
+0x227990 tire_pressure_can_increase_grip
+0x2279C8 lcamber
+0x2279D0 rcamber
+0x2279D8 static_camber_grip_falloff_f
+0x2279F8 static_camber_grip_falloff_start
+0x227A20 static_camber_grip_falloff_stop
+0x227A40 tire_stretch_factor
+0x227A58 tirewear_average_blend_f
+0x227A78 tirewear_curve
+0x227A98 enable_tire_temps
+0x227AB0 enable_tire_wear
+0x227C08 rear_diff_stiff
+0x227CD8 camber
+0x227D40 friction
+0x227DE0 frict_load1
+0x227DF0 frict_k1
+0x227E00 frict_load2
+0x227E10 frict_k2
+0x227E20 stiff_load1
+0x227E30 stiff_c1
+0x227E40 stiff_load2
+0x227E50 stiff_c2
+0x227E60 camber_stiff
+0x227E70 camber_peak
+0x227E80 camber_grip
+0x227E90 long_stiff
+0x227EA0 long_frict
+0x227EB0 grip_fade_start
+0x227EC0 grip_fade_stop
+0x227ED0 grip_fade
+0x227F58 leftman_never_forces
+0x228178 bump_force
+0x2281A0 contact_extra_left_lanes
+0x2281D8 crash_force
+0x2281E8 force_lane1_entry
+0x228280 magic_grip
+0x2284A0 tire_wear_speed_factor
+0x2284B8 tirewear_25_lap
+0x2284C8 tirewear_25_speed
+0x2284E0 wall_approach_lat_grip_f
+0x228538 blackbox_desired_laps_per_set_of_tires
+0x228580 blackbox_recorded_laps_per_set_of_tires
+0x228668 hangout_force_factor
+0x2286A8 hangout_max_grip
+0x2286C0 hangout_min_grip
+0x2286D8 magic_grip_height
+0x228708 sim_lite_grip
+0x228718 sim_lite_lateral_grip
+0x228730 sim_lite_longitudinal_grip
+0x228778 playerhit_grip_kill_f
+0x2289B8 player_wheel_contact_blast_f
+0x228A18 arcade_wheel_lock_enabled
+0x228B08 arcade_grip
+0x228B18 arcade_grip_min
+0x228BC8 arcade_total_yaw_force
+0x228C68 max_total_yaw_force_apron
+0x228C88 max_total_yaw_force_intercar
+0x228CA8 postcontact_stability_control_duration
+0x229200 !VF_NAME(VFWheel).IsPresent()
+0x229220 !VF_NAME(VFFrontAxle).IsPresent()
+0x229248 !VF_NAME(VFRearAxle).IsPresent()
+0x229478 VF_NAME(VFWheel).IsPresent()
+0x2294E0 VF_NAME(VFRearAxle).IsPresent()
+0x229500 VF_NAME(VFFrontAxle).IsPresent()
+0x229640 VFWheel
+0x229668 VFRearAxle
+0x229678 VFFrontAxle
+0x2299A8 e.diff.stiffness < 1
+0x229C91 diff: type=open stiffness=%f virtual_rm.av=%+f virtual_rm.resist=%f virtual_rm.inertia=%f
+0x229DE8 arcade/steer-force
+0x229EF0 %5.5d: === GetTorque(wheel_steering=%f,tan_peak_drift_angle=%f) ===
+0x22A058 m_steering_force
+0x22A070 total-downforce(G)
+0x22A0D8 wheel_torque
+0x22A100 %5.5d: %s/PXNotifyContact(%s) : local_pt=(%+.2f,%+.2f,%+.2f) local_impulse=(%+.2f,%+.2f,,%+.2f)
+0x22A3A0 rear_lat_grip_f
+0x22A400 lite/wheel
+0x22B7D8 entire track is hangout zone
+0x22BE30 ApplyForce(%s): discarding invalid force.
+0x22BE60 ApplyForce(%s): discarding invalid torque.
+0x22C950 %s.tire_pressure: %f
+0x22C988 %s.camber: %f
+0x22CA28 %s.wheel[%d]
+0x22CA38 %s.wheel_lock: %f
+0x22D628 collide-wheel-up
+0x22D740 GetTerrainSplineMod: mode=%s l2l3_latitude_shift=%.3f l2l4_grip_shift=%.3f
+0x22DF60 cpl.r.tires < 0
+0x22DF70 ResourceMonitor/form_opinion: fuel_per_lap=%f tires_per_lap=%f
+0x22E050 ResourceMonitor/handle_new_sample: fuel_per_lap=%f tires_per_lap=%f
+0x22E6A0 %5.5d: driving aid wear: raw_tire_wear=%.2f curve_wear=%.2f aid_penalty=%.2f
+0x22EA78 SP_WORN_TIRES
+0x22EAB8 SP_TIRE_BLOWN
+0x22F0A0 0 && "Unknown " "PitTires"
+0x22F0C0 PIT_TIRES_FOUR
+0x22F0D0 PIT_TIRES_TWO_RIGHT
+0x22F0E8 PIT_TIRES_TWO_LEFT
+0x22F100 PIT_TIRES_NONE
+0x22F3E0 extremely_low_equipment fuel_laps_remain=%.1f tire_laps_remain=%+.1f
+0x22F5C0 yf_low_tires current_tire_wear=%.2f
+0x22F628 low_tires tire_laps_remain=%.1f gf_tire_lap_threshold=%.1f
+0x22F670 equip_ok is_yellow=%d fuel_laps=%+.1f/%.1f tire_laps=%.1f/%.1f  
+0x22F7C0 %5.5d/%s: fill_time=%+.3f: no_tire=%+.3f two_tire=%+.3f four_tire=%+.3f must=%d
+0x22F848 !g_tire_list
+0x22F858 D:\N17\SharedDLLs\Phys\Phys\tire.cpp
+0x22F880 tire_list
+0x22F890 g_tire_list
+0x22F8A0 g_tire_list[i].ref_count == 0
+0x22F8C0 tire: out of tires! increase MAX_TIRES (%d)
+0x22F8F0 tire->ref_count == 0
+0x22F9D0 wheel_idx >= 0 && wheel_idx < ARRAY_N(v)
+0x22FA28 0 && "Unknown " "TireWearCurve"
+0x22FA48 D:\N17\SharedDLLs\Phys\Phys\wheel.cpp
+0x22FB10 WHEEL_LF/ARM
+0x22FB20 WHEEL_LF/DRAG
+0x22FB30 WHEEL_LF/SHOCK
+0x22FB40 WHEEL_LF/ARCADE_GRIP
+0x22FB58 WHEEL_LF/SELFALIGN
+0x22FB70 WHEEL_RF/ARM
+0x22FB80 WHEEL_RF/DRAG
+0x22FB90 WHEEL_RF/SHOCK
+0x22FBA0 WHEEL_RF/ARCADE_GRIP
+0x22FBB8 WHEEL_RF/SELFALIGN
+0x22FBD0 WHEEL_LR/ARM
+0x22FBE0 WHEEL_LR/DRAG
+0x22FBF0 WHEEL_LR/SHOCK
+0x22FC00 WHEEL_LR/ARCADE_GRIP
+0x22FC18 WHEEL_LR/SELFALIGN
+0x22FC30 WHEEL_RR/ARM
+0x22FC40 WHEEL_RR/DRAG
+0x22FC50 WHEEL_RR/SHOCK
+0x22FC60 WHEEL_RR/ARCADE_GRIP
+0x22FC78 WHEEL_RR/SELFALIGN
+0x22FC90 wheel/unk
+0x22FCB0 Min Wear Grip:
+0x22FCE1 %s Grip
+0x22FD40 Wheel-%s
+0x22FD60 camber_grip_factor
+0x22FD78 bulge_grip
+0x22FD88 so_called_wear_grip
+0x22FDA0 current_wear_grip
+0x22FDC8 current_stiff
+0x22FDD8 lat_force
+0x22FE00 lon_force
+0x22FE20 shock_force
+0x22FE40 slip_ratio
+0x22FE98 tire_pressure
+0x22FEB8 terr_grip
+0x22FED8 steer-force
+0x22FEE8 m_tire != NULL
+0x22FF00 Wheel: wear_factor=%.0f min_wear_grip=%.2f player_tire_wear_factor=%.1f max_tirewear_drag=%+.3f
+0x2329A8 evaluate_pose_for_lower_wheelmount_y/lower_failure
+0x2329E0 evaluate_pose_for_lower_wheelmount_y/upper_failure
+0x232A18 is_valid_wheel_xf(w.transform)
+0x232A90 min >= 0 && min <= susp_contactpatch_table::N
+0x232B10 min_lower_wheel_mount_y < max_lower_wheel_mount_y
+0x232B68 sway_force
+0x232BF0 SolidAxle: Upper wishbone can't be parallel to chassis z axis w/o panhard bar
+0x232C40 upper_lpr.valid && "SolidAxle: Upper wishbone can't be parallel to chassis z axis w/o panhard bar"
+0x232CA8 SolidAxle: failed to intersect four-link with axle plane
+0x232CF0 final_lpr.valid && "SolidAxle: failed to intersect four-link with axle plane"
+0x232D40 wheel_type != WHEEL_INVALID
+0x232D60 wheel_type >= 0 && wheel_type < ARRAY_N(g_cfg)
+0x232D90 g_cfg[wheel_type].IsValid()
+0x232DB0 raw_wheel_type >= 0 && raw_wheel_type < ARRAY_N(g_cfg)
+0x232E88 SolidAxle: panhard bar doesn't intersect chassis zy plane
+0x232ED0 lpr.valid && "SolidAxle: panhard bar doesn't intersect chassis zy plane"
+0x232F50 get_framework_dwb_cfg(WheelType(i)) != NULL && "new-susp: no framework data?"
+0x232FB0 spring_force
+0x232FC0 bumpstop_force
+0x232FD0 Abs(upper_force-lower_force) < .01f
+0x232FF8 total_spring_force
+0x233010 damper_force
+0x2335B0 encode:TIRES_BITS
+0x235948 MR_FORCED
+0x25C1D3 AIGetPlayerTireWearPerLap
+0x25C315 BGCONTROLInstallControlClearForcesFn
+0x25C3E3 BGCONTROLInstallControlSetForceFeedbackFn
+0x25C40D BGCONTROLInstallControlSetRumbleForceFn
+0x25C8B8 BGPXInstallApplyForceFn
+0x25D46B MultiReceivePacket
+0x25D47E MultiRequestNewSyncPoint
+0x25D4E1 PhysPXNotifyContact
+0x25D821 PhysicsConfigSetFrontAxle
+0x25D895 PhysicsConfigSetRearAxle
+0x25D8E6 PhysicsConfigSetWheel
+0x25D926 PhysicsForceRaceOver
+0x25DA20 PlayerCarForceAI
+0x265068 .?AVterr_func@?1??UpdateWheels@Car@@AEAAXXZ@
+0x2650C8 .?AVIWheelTerrainFunc@@
+0x265408 .?AVWheel@@
+0x265728 .?AVIMultiReliableClient@@

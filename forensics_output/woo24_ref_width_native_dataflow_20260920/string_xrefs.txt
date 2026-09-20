@@ -1,0 +1,96 @@
+
+===== STRING ref_width =====
+file_off=0x227EE0 rva=0x228AE0 va=0x180228AE0
+xrefs=<none>
+
+===== STRING frict_load1 =====
+file_off=0x227DE0 rva=0x2289E0 va=0x1802289E0
+xrefs=<none>
+
+===== STRING frict_k1 =====
+file_off=0x227DF0 rva=0x2289F0 va=0x1802289F0
+xrefs=<none>
+
+===== STRING frict_load2 =====
+file_off=0x227E00 rva=0x228A00 va=0x180228A00
+xrefs=<none>
+
+===== STRING frict_k2 =====
+file_off=0x227E10 rva=0x228A10 va=0x180228A10
+xrefs=<none>
+
+===== STRING stiff_load1 =====
+file_off=0x227E20 rva=0x228A20 va=0x180228A20
+xrefs=<none>
+
+===== STRING stiff_c1 =====
+file_off=0x227E30 rva=0x228A30 va=0x180228A30
+xrefs=<none>
+
+===== STRING stiff_load2 =====
+file_off=0x227E40 rva=0x228A40 va=0x180228A40
+xrefs=<none>
+
+===== STRING stiff_c2 =====
+file_off=0x227E50 rva=0x228A50 va=0x180228A50
+xrefs=<none>
+
+===== STRING camber_stiff =====
+file_off=0x227E60 rva=0x228A60 va=0x180228A60
+xrefs=<none>
+
+===== STRING camber_peak =====
+file_off=0x227E70 rva=0x228A70 va=0x180228A70
+xrefs=<none>
+
+===== STRING camber_grip =====
+file_off=0x227E80 rva=0x228A80 va=0x180228A80
+xrefs=<none>
+
+===== STRING long_stiff =====
+file_off=0x227E90 rva=0x228A90 va=0x180228A90
+xrefs=<none>
+
+===== STRING long_frict =====
+file_off=0x227EA0 rva=0x228AA0 va=0x180228AA0
+xrefs=<none>
+
+===== STRING grip_fade_start =====
+file_off=0x227EB0 rva=0x228AB0 va=0x180228AB0
+xrefs=<none>
+
+===== STRING grip_fade_stop =====
+file_off=0x227EC0 rva=0x228AC0 va=0x180228AC0
+xrefs=<none>
+
+===== STRING grip_fade =====
+file_off=0x227ED0 rva=0x228AD0 va=0x180228AD0
+xrefs=<none>
+
+===== STRING magic_b =====
+file_off=0x227DC0 rva=0x2289C0 va=0x1802289C0
+xrefs=<none>
+
+===== STRING magic_c =====
+file_off=0x227DC8 rva=0x2289C8 va=0x1802289C8
+xrefs=<none>
+
+===== STRING magic_d =====
+file_off=0x227DD0 rva=0x2289D0 va=0x1802289D0
+xrefs=<none>
+
+===== STRING magic_e =====
+file_off=0x227DD8 rva=0x2289D8 va=0x1802289D8
+xrefs=<none>
+
+===== STRING VFFrontAxle =====
+file_off=0x229678 rva=0x22A278 va=0x18022A278
+xrefs=<none>
+
+===== STRING VFRearAxle =====
+file_off=0x229668 rva=0x22A268 va=0x18022A268
+xrefs=<none>
+
+===== STRING VFWheel =====
+file_off=0x229640 rva=0x22A240 va=0x18022A240
+xrefs=<none>
