@@ -1,0 +1,151 @@
+name: WoO24 phys axle offset and runtime reads
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_phys_axle_offset_runtime_reads.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recover axle config offsets and exported setters
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile,re,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          dll='phys_unpack/physimpl.dll'
+          data=Path(dll).read_bytes()
+          pe=pefile.PE(dll)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def fileoff(va):
+              try:return pe.get_offset_from_rva(va-base)
+              except:return None
+          def vaoff(off):
+              for s in pe.sections:
+                  if s.PointerToRawData <= off < s.PointerToRawData+s.SizeOfRawData:
+                      return base+s.VirtualAddress+(off-s.PointerToRawData)
+              return None
+
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          insns=list(md.disasm(code,start))
+          byaddr={x.address:i for i,x in enumerate(insns)}
+
+          targets=['ref_width','frict_load1','frict_k1','frict_load2','frict_k2',
+                   'stiff_load1','stiff_c1','stiff_load2','stiff_c2',
+                   'magic_b','magic_c','magic_d','magic_e','long_stiff','long_frict',
+                   'camber_stiff','camber_grip','camber_peak',
+                   'grip_fade_start','grip_fade_stop','grip_fade',
+                   'friction','moment','resistance','rubber_rate','rubber_height',
+                   'left_brake_f','right_brake_f','stagger','camber','rate','sway','bump','rebound','ride']
+
+          sva={}
+          for t in targets:
+              off=data.find(t.encode()+b'\0')
+              if off>=0:sva[vaoff(off)]=t
+          print('TARGET STRING VAS')
+          for v,t in sorted(sva.items()): print(t,hex(v))
+
+          # code direct refs
+          refs=[]
+          for idx,ins in enumerate(insns):
+              vals=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      vals.append(ins.address+ins.size+op.mem.disp)
+                  elif op.type==X86_OP_IMM:
+                      vals.append(op.imm)
+              for v in vals:
+                  if v in sva:
+                      refs.append((idx,sva[v],v))
+          print('\nDIRECT STRING XREF COUNT',len(refs))
+
+          # Guess registration field offset from nearest preceding write to r9d/r9.
+          for idx,t,v in refs:
+              ins=insns[idx]
+              off_guess=None
+              src=None
+              for j in range(idx-1,max(-1,idx-12),-1):
+                  p=insns[j]
+                  if p.mnemonic=='mov' and p.operands and p.operands[0].type==X86_OP_REG and p.reg_name(p.operands[0].reg) in ('r9d','r9'):
+                      if len(p.operands)>1 and p.operands[1].type==X86_OP_IMM:
+                          off_guess=p.operands[1].imm; src=p.address; break
+                  if p.mnemonic=='xor' and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG and p.reg_name(p.operands[0].reg) in ('r9d','r9'):
+                      if p.operands[1].type==X86_OP_REG and p.operands[1].reg==p.operands[0].reg:
+                          off_guess=0; src=p.address; break
+              print(f'XREF {t:24s} at={ins.address:#x} field_offset={off_guess} setter={src and hex(src)}')
+              for j in range(max(0,idx-5),min(len(insns),idx+5)):
+                  p=insns[j]; mark='>>' if j==idx else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+          
+          # Exported setter disassembly.
+          exports={}
+          for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+              if sym.name:
+                  n=sym.name.decode(errors='replace')
+                  exports[n]=base+sym.address
+          for n in ['PhysicsConfigSetFrontAxle','PhysicsConfigSetRearAxle','PhysicsConfigSetWheel','PhysicsConfigSetTransmission','PhysicsCreateCar']:
+              a=exports.get(n)
+              if not a:continue
+              print('\n'+'='*120+'\nEXPORT',n,hex(a)+'\n'+'='*120)
+              o=fileoff(a)
+              if o is None:continue
+              m2=Cs(CS_ARCH_X86,CS_MODE_64);m2.detail=True
+              for k,ins in enumerate(m2.disasm(data[o:o+0x800],a)):
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}')
+                  if ins.mnemonic=='ret' and k>5: break
+
+          # find all memory reads with small positive displacement matching recovered offsets.
+          recovered={}
+          for idx,t,v in refs:
+              off_guess=None
+              for j in range(idx-1,max(-1,idx-12),-1):
+                  p=insns[j]
+                  if p.mnemonic=='mov' and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG and p.reg_name(p.operands[0].reg) in ('r9d','r9') and p.operands[1].type==X86_OP_IMM:
+                      off_guess=p.operands[1].imm;break
+                  if p.mnemonic=='xor' and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG and p.reg_name(p.operands[0].reg) in ('r9d','r9') and p.operands[1].type==X86_OP_REG and p.operands[1].reg==p.operands[0].reg:
+                      off_guess=0;break
+              if off_guess is not None: recovered.setdefault(off_guess,[]).append(t)
+
+          print('\nRUNTIME MEMORY OPERANDS FOR RECOVERED OFFSETS')
+          # We cannot know base register yet; report high-signal SIMD/float operations only.
+          seen=0
+          float_mn=('movss','movsd','mulss','divss','addss','subss','minss','maxss','comiss','ucomiss',
+                    'movups','movaps','mulps','addps','subps','divps')
+          for idx,ins in enumerate(insns):
+              if ins.mnemonic not in float_mn: continue
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.disp in recovered and op.mem.base not in (0,X86_REG_RIP):
+                      # Exclude static-init zone and common descriptor helpers; print context.
+                      if ins.address < 0x180010000: continue
+                      print(f'\nREAD offset={op.mem.disp:#x} fields={recovered[op.mem.disp]} at={ins.address:#x} base={ins.reg_name(op.mem.base)} {ins.mnemonic} {ins.op_str}')
+                      for j in range(max(0,idx-7),min(len(insns),idx+10)):
+                          p=insns[j];mark='>>' if j==idx else '  '
+                          print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+                      seen+=1
+                      if seen>=500: break
+              if seen>=500: break
+          print('TOTAL_SHOWN',seen)
+          PY
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-phys-axle-offset-runtime-reads
+          path: out/result.txt
+          retention-days: 2
