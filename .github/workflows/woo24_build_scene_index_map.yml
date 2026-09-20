@@ -1,0 +1,71 @@
+name: WoO24 build scene index map
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_build_scene_index_map.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract build settings scene table
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+          python3 - <<'PY' > out/scenes.txt
+          import UnityPy, json, re
+          env=UnityPy.load('unpack')
+          found=0
+          for k,sf in env.files.items():
+              if not hasattr(sf,'objects'): continue
+              for o in sf.objects.values():
+                  if o.type.name not in ('BuildSettings','EditorBuildSettings'):
+                      continue
+                  found+=1
+                  print('OBJECT',k,o.path_id,o.type.name,'SIZE',len(o.get_raw_data()))
+                  try:
+                      d=o.read()
+                      for attr in dir(d):
+                          if 'scene' in attr.lower() or 'level' in attr.lower():
+                              try: print('ATTR',attr,repr(getattr(d,attr)))
+                              except: pass
+                  except Exception as e: print('READERR',repr(e))
+                  try:
+                      tree=o.read_typetree()
+                      print('TREE',json.dumps(tree,default=str,indent=2))
+                  except Exception as e: print('TREEERR',repr(e))
+                  raw=bytes(o.get_raw_data())
+                  strings=[x.decode('utf-8','ignore') for x in re.findall(rb'[ -~]{4,}',raw)]
+                  print('STRINGS')
+                  for i,s in enumerate(strings):
+                      print(i,repr(s))
+          print('FOUND',found)
+
+          # Also search every unpacked global file for scene path strings.
+          print('\n=== FILE STRING SCENE HITS ===')
+          from pathlib import Path
+          for p in Path('unpack').iterdir():
+              if not p.is_file(): continue
+              raw=p.read_bytes()
+              ss=[x.decode('ascii','ignore') for x in re.findall(rb'[ -~]{8,}',raw)]
+              hits=[s for s in ss if re.search(r'LeagueStoreScene|Sprint410|Sprint.?410|League.*Sprint',s,re.I)]
+              if hits:
+                  print('\nFILE',p.name)
+                  for s in hits[:1000]: print(repr(s))
+          PY
+          cat out/scenes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-build-scene-index-map
+          path: out/
+          retention-days: 1
