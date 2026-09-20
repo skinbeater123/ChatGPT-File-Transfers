@@ -1,0 +1,95 @@
+name: WoO24 resources raw script-id registry
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_raw_scriptid_registry.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Count raw MonoBehaviour script PPtrs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+          python3 - <<'PY' > out/raw_scriptids.txt
+          import UnityPy, collections, json
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              n=getattr(v,'name',k)
+              if n.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v; break
+          if sf is None: raise SystemExit('resources.assets missing')
+          objs=list(sf.objects.values()) if hasattr(sf.objects,'values') else list(sf.objects)
+
+          target={
+            1102:'MGI.ChassisInfo',
+            1113:'PhysicsPrefabResources',
+            1431:'ChassisIdAsset',
+            1835:'MGI.CarManager.CarLoader',
+            2319:'NextChassis.Chassis',
+            1008:'NextChassis.PhysChassisAsset',
+            1547:'NextChassis.PhysWheelAsset',
+            1551:'NextChassis.CarPhysicsAsset',
+            2104:'NextChassis.PhysEngineAsset',
+            2363:'NextChassis.PhysTransmissionAsset',
+            2449:'NextChassis.PhysAxleAsset',
+            2408:'ChassisTrackData',
+          }
+          counts=collections.Counter()
+          fileids=collections.Counter()
+          hits=[]
+
+          for o in objs:
+              if o.type.name!='MonoBehaviour': continue
+              try:
+                  d=o.read()
+                  p=d.m_Script
+                  fid=int(getattr(p,'file_id',-999))
+                  pid=int(getattr(p,'path_id',0))
+              except Exception:
+                  continue
+              counts[(fid,pid)] += 1
+              fileids[fid]+=1
+              if pid in target:
+                  try: name=getattr(d,'m_Name','') or ''
+                  except: name=''
+                  rec={'obj_path':o.path_id,'name':name,'script_file_id':fid,'script_path_id':pid,'class':target[pid],'size':len(o.get_raw_data())}
+                  try: rec['tree']=o.read_typetree()
+                  except Exception as e: rec['tree_error']=repr(e)
+                  hits.append(rec)
+
+          print('TOTAL_MONOBEHAVIOUR_SCRIPT_PTRS',sum(counts.values()))
+          print('SCRIPT_FILEID_COUNTS',dict(sorted(fileids.items())))
+          print('\nTARGET SCRIPT COUNTS')
+          for pid,name in target.items():
+              cs=[(fid,c) for (fid,p),c in counts.items() if p==pid]
+              print(pid,name,cs,'TOTAL',sum(c for _,c in cs))
+
+          print('\nTARGET HITS',len(hits))
+          for r in hits:
+              print('\n--- HIT ---')
+              print(json.dumps(r,default=str,indent=2))
+
+          print('\nTOP SCRIPT PTRS')
+          for (fid,pid),c in counts.most_common(100):
+              print(fid,pid,c, target.get(pid,''))
+          PY
+          cat out/raw_scriptids.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-raw-scriptids
+          path: out/
+          retention-days: 1
