@@ -175,3 +175,5 @@ jobs:
             woo24_deep/il2cppdumper.log
           if-no-files-found: error
           retention-days: 1
+
+# rerun for G2-009 yaw-stability comparison
