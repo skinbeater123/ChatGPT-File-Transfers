@@ -1,0 +1,53 @@
+name: WoO24 existing ZIP asset locator
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_existing_zip_asset_locator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  locate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Inventory all existing WoO24-related ZIPs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          {
+            for z in "WOO24.zip" "globalgamemanagers.zip" "phys.zip" "a01_sprintcar.zip" "sprintcar 2 .zip"; do
+              echo
+              echo "================================================================"
+              echo "ZIP: $z"
+              echo "================================================================"
+              if [ -f "$z" ]; then
+                unzip -l "$z"
+              else
+                echo "MISSING"
+              fi
+            done
+          } > out/full_zip_inventory.txt
+
+          {
+            echo "TARGET MATCHES"
+            echo "=============="
+            grep -Ei               'sharedassets[0-9]*\.assets(\.resS)?$|sharedassets[0-9]*\.resource$|globalgamemanagers(\.assets)?$|resources\.assets(\.resS)?$|resources\.resource$|level[0-9]+$|PhysWheel|PhysAxle|CarPhysicsAsset|PhysChassis|PhysEngine|PhysTransmission'               out/full_zip_inventory.txt || true
+          } > out/target_matches.txt
+
+          cat out/target_matches.txt
+
+      - name: Upload derived inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-existing-zip-asset-locator
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
