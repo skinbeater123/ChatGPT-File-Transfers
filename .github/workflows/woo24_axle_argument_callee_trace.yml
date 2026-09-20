@@ -1,0 +1,120 @@
+name: WoO24 axle argument callee trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_argument_callee_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace proven axle pointers through call arguments
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va):
+              try:return pe.get_offset_from_rva(va-base)
+              except:return None
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          end=start+len(code)
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          insns=list(md.disasm(code,start))
+
+          fields={
+             0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+             0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+             0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+             0xa0:'camber_stiff',0xa4:'camber_peak_sin',0xa8:'camber_grip',
+             0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start_sin',
+             0xb8:'fade_stop_sin',0xbc:'fade',0xc0:'ref_width'
+          }
+          argregs={'rcx','rdx','r8','r9'}
+
+          formations=[]
+          for idx,ins in enumerate(insns):
+              if ins.id==0 or ins.mnemonic!='lea' or len(ins.operands)<2:continue
+              d,s=ins.operands[0],ins.operands[1]
+              if d.type==X86_OP_REG and s.type==X86_OP_MEM and s.mem.base not in (0,X86_REG_RIP) and s.mem.disp in (0x18c,0x250):
+                  formations.append((idx,ins.reg_name(d.reg),'front' if s.mem.disp==0x18c else 'rear',ins.reg_name(s.mem.base)))
+
+          calls={}
+          print('FORMATIONS',len(formations))
+          for idx,areg,side,carreg in formations:
+              aliases={areg}
+              print('\nFORMATION',side,hex(insns[idx].address),'axle_reg',areg,'car_reg',carreg,insns[idx].op_str)
+              for j in range(idx+1,min(len(insns),idx+100)):
+                  p=insns[j]
+                  if p.id==0:continue
+                  if p.mnemonic=='ret':break
+                  # propagate straightforward register copies/leas
+                  if p.mnemonic in ('mov','lea') and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG:
+                      dst=p.reg_name(p.operands[0].reg); src=p.operands[1]
+                      newalias=False
+                      if p.mnemonic=='mov' and src.type==X86_OP_REG and p.reg_name(src.reg) in aliases:
+                          newalias=True
+                      elif p.mnemonic=='lea' and src.type==X86_OP_MEM and p.reg_name(src.mem.base) in aliases and src.mem.disp==0:
+                          newalias=True
+                      if newalias: aliases.add(dst)
+                      else: aliases.discard(dst)
+
+                  if p.mnemonic=='call':
+                      target=p.operands[0].imm if p.operands and p.operands[0].type==X86_OP_IMM else None
+                      passed=sorted(argregs & aliases)
+                      if passed:
+                          print(' AXLE_CALL',hex(p.address),'target',target and hex(target),'side',side,'argregs',passed)
+                          if target and start<=target<end:
+                              calls.setdefault(target,set()).add(side)
+                      # Windows x64 volatile regs clobbered after call
+                      aliases={r for r in aliases if r not in {'rax','rcx','rdx','r8','r9','r10','r11'}}
+                  # Explicit xor reg,reg destroys alias
+                  if p.mnemonic=='xor' and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG and p.operands[1].type==X86_OP_REG and p.operands[0].reg==p.operands[1].reg:
+                      aliases.discard(p.reg_name(p.operands[0].reg))
+
+          print('\nUNIQUE DIRECT AXLE CALLEES',len(calls))
+          m2=Cs(CS_ARCH_X86,CS_MODE_64);m2.detail=True
+          for target,sides in sorted(calls.items()):
+              o=off(target)
+              if o is None:continue
+              parsed=[]
+              accesses=[]
+              for k,ins in enumerate(m2.disasm(data[o:o+0x1800],target)):
+                  parsed.append(ins)
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.disp in fields:
+                          accesses.append((ins.address,ins.reg_name(op.mem.base) if op.mem.base else '',op.mem.disp,fields[op.mem.disp],ins.mnemonic,ins.op_str))
+                  if ins.mnemonic=='ret' and k>5:break
+              print('\n'+'='*140)
+              print('CALLEE',hex(target),'sides',sorted(sides),'field_accesses',len(accesses))
+              print('='*140)
+              for a in accesses:print(' FIELD',a)
+              if accesses:
+                  for ins in parsed:
+                      mark='>>' if any(ins.address==a[0] for a in accesses) else '  '
+                      print(f'{mark}{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}')
+          PY
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-argument-callee-trace
+          path: out/result.txt
+          retention-days: 2
