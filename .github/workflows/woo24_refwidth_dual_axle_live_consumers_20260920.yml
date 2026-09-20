@@ -1,0 +1,111 @@
+name: WoO24 ref_width dual axle live consumers 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_refwidth_dual_axle_live_consumers_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/dual.txt
+          import pefile,bisect,collections,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; raw=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          funcs=sorted(set((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          def off(v):return pe.get_offset_from_rva(v-B)
+          def dis(f):
+            a,b=f; md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+            return list(md.disasm(raw[off(a):off(a)+(b-a)],a))
+          def memops(x):
+            try:return [o for o in x.operands if o.type==X86_OP_MEM]
+            except:return []
+          def cstr(v):
+            try:
+              b=raw[off(v):off(v)+240].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=q<127 or q in (9,10,13) for q in b): return b.decode('ascii','replace')
+            except:pass
+          def f32(v):
+            try:return struct.unpack('<f',raw[off(v):off(v)+4])[0]
+            except:return None
+          allf={f:dis(f) for f in funcs}
+          # Require same base register in a function to hit both exact inline ref-width offsets.
+          candidates=[]
+          for f,ii in allf.items():
+            br=collections.defaultdict(set)
+            detail=collections.defaultdict(list)
+            for i,x in enumerate(ii):
+              for o in memops(x):
+                if o.mem.base and o.mem.index==0:
+                  reg=x.reg_name(o.mem.base); br[reg].add(o.mem.disp); detail[reg].append((i,x,o.mem.disp))
+            for reg,offs in br.items():
+              if 0x24c in offs and 0x310 in offs:
+                candidates.append((f,reg,offs,detail[reg]))
+          print('DUAL_CANDIDATES',len(candidates))
+          for f,reg,offs,h in candidates:
+            axle_near=sorted(o for o in offs if (0x1fc<=o<=0x24c) or (0x2c0<=o<=0x310))
+            print(f'\n=== DUAL func={f[0]:#x}-{f[1]:#x} base={reg} near={[hex(o) for o in axle_near]} ===')
+            ii=allf[f]
+            # strings and calls
+            for x in ii:
+              for o in memops(x):
+                if o.mem.base==X86_REG_RIP:
+                  v=x.address+x.size+o.mem.disp; s=cstr(v)
+                  if s: print('STRING',hex(x.address),repr(s))
+            for i,x,d in h:
+              if d in axle_near:
+                rw='?'
+                try:
+                  if x.operands and x.operands[0].type==X86_OP_MEM: rw='WRITE'
+                  elif any(o.type==X86_OP_MEM for o in x.operands[1:]): rw='READ'
+                except:pass
+                print(f'{rw:5s} {x.address:#x}: {x.mnemonic:8s} {x.op_str}')
+            # contextual dump around both width hits
+            for target in (0x24c,0x310):
+              for i,x,d in h:
+                if d==target:
+                  print(f'-- WIDTH {target:#x} context @ {x.address:#x} --')
+                  for y in ii[max(0,i-28):min(len(ii),i+55)]:
+                    ann=[]
+                    for o in memops(y):
+                      if o.mem.base==X86_REG_RIP:
+                        v=y.address+y.size+o.mem.disp
+                        ann.append(f'RIP={v:#x} f32={f32(v)!r} str={cstr(v)!r}')
+                    print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str:70s} {" | ".join(ann)}')
+                  break
+
+          print('\n=== TARGET 0x1800222D0 FULL SEMANTIC CONTEXT ===')
+          f=next(f for f in funcs if f[0]==0x1800222d0)
+          ii=allf[f]
+          for x in ii:
+            ann=[]
+            for o in memops(x):
+              if o.mem.base==X86_REG_RIP:
+                v=x.address+x.size+o.mem.disp
+                ann.append(f'RIP={v:#x} f32={f32(v)!r} str={cstr(v)!r}')
+            if 0x180022680<=x.address<=0x180022d20:
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:70s} {" | ".join(ann)}')
+
+          print('\n=== CALLERS OF 0x1800222D0 ===')
+          t=0x1800222d0
+          for f,ii in allf.items():
+            for i,x in enumerate(ii):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==t:
+                print('CALL',hex(x.address),'caller',tuple(hex(z) for z in f))
+                for y in ii[max(0,i-25):min(len(ii),i+30)]:
+                  print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          PY
+          cat out/dual.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-refwidth-dual-axle-live-consumers
+          path: out/dual.txt
+          retention-days: 3
