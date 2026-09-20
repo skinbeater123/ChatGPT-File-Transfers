@@ -1,0 +1,116 @@
+name: WoO24 rear wheel omega probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rear_omega_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Trace wheel angular-speed representation
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_input woo24_phys woo24_dump woo24_out
+          unzip -q WOO24.zip -d woo24_input
+          unzip -q phys.zip -d woo24_phys
+
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git /tmp/Il2CppDumper
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('/tmp/Il2CppDumper/Il2CppDumper/config.json')
+          j=json.loads(p.read_text(encoding='utf-8-sig'))
+          for k in ['DumpMethod','DumpField','DumpProperty','DumpFieldOffset','DumpMethodOffset','DumpTypeDefIndex']:
+              j[k]=True
+          j['RequireAnyKey']=False
+          p.write_text(json.dumps(j,indent=2),encoding='utf-8')
+          PY
+          dotnet build /tmp/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=$(find /tmp/Il2CppDumper/Il2CppDumper/bin/Release/net8.0 -name Il2CppDumper.dll | head -1)
+          cp /tmp/Il2CppDumper/Il2CppDumper/config.json "$(dirname "$D")/config.json"
+          dotnet "$D" woo24_input/GameAssembly.dll woo24_input/global-metadata.dat "$PWD/woo24_dump" >/dev/null
+
+          python3 - <<'PY' > woo24_out/rear_omega_probe.txt
+          import re,bisect
+          from pathlib import Path
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_IMM
+
+          dump=Path('woo24_dump/dump.cs').read_text(encoding='utf-8',errors='replace')
+          print('WOO24 REAR WHEEL OMEGA / LOCK REPRESENTATION PROBE')
+          print('='*100)
+          print('\nMANAGED TYPES')
+          for part in re.split(r'(?=// Namespace: )',dump):
+              if not part.startswith('// Namespace: '): continue
+              low=part.lower()
+              if any(t in low for t in [
+                  'lwheelpacket','wheelpacket','wheel_speed','wheelspeed',
+                  'angular_speed','angularspeed','wheel_rpm','wheelrpm',
+                  'rotation_speed','rotationspeed','rear axle','rearaxle'
+              ]):
+                  # Focus declarations that are plausibly wheel/physics packets.
+                  head='\n'.join(part.splitlines()[:35]).lower()
+                  if re.search(r'wheel|axle|phys|carpacket|packet',head):
+                      print('\n---')
+                      print(part[:18000])
+
+          p=Path('woo24_phys/physimpl.dll')
+          raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          funcs=sorted(set((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                           for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[a for a,b in funcs]
+          def fn(a):
+              i=bisect.bisect_right(starts,a)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=a<funcs[i][1] else None
+
+          exports={((s.name or b'').decode('ascii','ignore')):s.address
+                   for s in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+          print('\nNATIVE EXPORTS')
+          for name in sorted(exports):
+              if re.search(r'Wheel|Axle|CarPacket|Packet',name,re.I):
+                  print(f'{name:52s} RVA=0x{exports[name]:X} VA=0x{base+exports[name]:X}')
+
+          # Full LMPhysicsGetCarPacket, which is known to iterate 4 wheel objects.
+          if 'LMPhysicsGetCarPacket' in exports:
+              a=base+exports['LMPhysicsGetCarPacket']; f=fn(a)
+              print(f'\n### LMPhysicsGetCarPacket func={f}')
+              if f:
+                  md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True
+                  for x in md.disasm(pe.get_data(f[0]-base,f[1]-f[0]),f[0]):
+                      print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}')
+
+          print('\nNATIVE STRINGS')
+          for m in re.finditer(rb'[ -~]{4,}',raw):
+              s=m.group().decode('ascii','ignore')
+              if re.search(r'wheel.*(rpm|speed|omega|angular|rotation)|'
+                           r'(rpm|omega|angular).*wheel|'
+                           r'differential|limited.?slip|spool|axle.?lock|'
+                           r'rear.*(wheel|axle|drive)',s,re.I):
+                  print(s[:1000])
+          PY
+
+          sed -n '1,30000p' woo24_out/rear_omega_probe.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-rear-omega-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
