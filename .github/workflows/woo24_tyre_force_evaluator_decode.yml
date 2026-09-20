@@ -1,0 +1,107 @@
+name: WoO24 tyre force evaluator decode
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_tyre_force_evaluator_decode.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode tyre force evaluator
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+          def readf(va):
+              try:return struct.unpack('<f',data[off(va):off(va)+4])[0]
+              except:return None
+          fields={
+             0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+             0x80:'frict_load1_N',0x84:'frict_k1',0x88:'frict_load2_N',0x8c:'frict_k2',
+             0x90:'stiff_load1_N',0x94:'stiff_c1_N_per_rad',0x98:'stiff_load2_N',0x9c:'stiff_c2_N_per_rad',
+             0xa0:'camber_stiff',0xa4:'camber_peak_sin',0xa8:'camber_grip',
+             0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start_sin',
+             0xb8:'fade_stop_sin',0xbc:'fade',0xc0:'ref_width'
+          }
+
+          target=0x180059DE0
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True
+          parsed=[]
+          for i,ins in enumerate(md.disasm(data[off(target):off(target)+0x2800],target)):
+              parsed.append(ins)
+              if ins.mnemonic=='ret' and i>10: break
+
+          print('=== TYRE FORCE EVALUATOR',hex(target),'instructions',len(parsed),'end',hex(parsed[-1].address),'===')
+          calls=[]
+          for ins in parsed:
+              anns=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM:
+                      if op.mem.disp in fields:
+                          anns.append('FIELD='+fields[op.mem.disp])
+                      if op.mem.base==X86_REG_RIP:
+                          va=ins.address+ins.size+op.mem.disp
+                          f=readf(va)
+                          anns.append(f'RIP={va:#x} f32={f!r}')
+                  elif op.type==X86_OP_IMM and ins.mnemonic=='call':
+                      calls.append(op.imm)
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:70s} {" | ".join(anns)}')
+
+          print('\n=== DIRECT CALL TARGETS ===')
+          for x in sorted(set(calls)): print(hex(x))
+
+          # Caller proving R8 is live rear axle.
+          caller=0x180062900
+          print('\n=== PROVING CALLER AROUND 0x180062A55 ===')
+          for i,ins in enumerate(md.disasm(data[off(caller):off(caller)+0x300],caller)):
+              anns=[]
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.disp in (0x18c,0x250):
+                      anns.append('AXLE_BASE_'+('F' if op.mem.disp==0x18c else 'R'))
+                  if op.type==X86_OP_IMM and ins.mnemonic=='call' and op.imm==target:
+                      anns.append('CALL_TYRE_EVAL')
+              print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:70s} {" | ".join(anns)}')
+
+          # Disassemble short direct callees if they are internal and modest.
+          for ct in sorted(set(calls)):
+              if not (base <= ct < base+pe.OPTIONAL_HEADER.SizeOfImage): continue
+              print('\n'+'='*130+'\nCALLEE '+hex(ct)+'\n'+'='*130)
+              try:o=off(ct)
+              except:continue
+              n=0
+              for ins in md.disasm(data[o:o+0x500],ct):
+                  anns=[]
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          va=ins.address+ins.size+op.mem.disp
+                          anns.append(f'RIP={va:#x} f32={readf(va)!r}')
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:65s} {" | ".join(anns)}')
+                  n+=1
+                  if ins.mnemonic=='ret' and n>2:break
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-tyre-force-evaluator-decode
+          path: out/result.txt
+          retention-days: 2
