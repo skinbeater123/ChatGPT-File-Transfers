@@ -1,0 +1,35 @@
+name: WoO24 Sprint410 resource name locator
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_sprint410_resource_name_locator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  locate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Search Global.pre and runtime resource strings
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for f in Global.pre WOO24.zip; do
+            curl -L --fail --retry 3 -o "$f" "https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/$f"
+          done
+          mkdir -p woo
+          unzip -q WOO24.zip -d woo
+          {
+            echo '=== Global.pre Sprint410 neighborhoods ==='
+            strings -a -t x Global.pre | grep -Ei -C 12 'Sprint.?410|sprint410|carloader|cars_|tires_|chassis|physics' | head -12000 || true
+            echo
+            echo '=== GameAssembly related literals ==='
+            strings -a -t x woo/GameAssembly.dll | grep -Ei -C 5 'carloader|cars_|tires_|physics(prefab)?|resourceId|ChassisInfo' | head -12000 || true
+            echo
+            echo '=== global-metadata related literals ==='
+            strings -a -t x woo/global-metadata.dat | grep -Ei -C 5 'carloader|cars_|tires_|physics(prefab)?|resourceId|Sprint.?410' | head -12000 || true
+          } > locator.txt
+          cat locator.txt
