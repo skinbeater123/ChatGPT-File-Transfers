@@ -1,0 +1,59 @@
+name: WoO24 ref_width solver F9830 trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_solver_f9830_20260920.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - name: Disassemble solver
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out
+          mkdir -p phys_unpack out
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY'
+          import pefile, os
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          p='phys_unpack/physimpl.dll'
+          pe=pefile.PE(p)
+          raw=open(p,'rb').read()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          target=0x1800f9830
+          def off(rva): return pe.get_offset_from_rva(rva)
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          start=target
+          end=target+0x1800
+          data=raw[off(start-base):off(end-base)]
+          ins=list(md.disasm(data,start))
+          with open('out/f9830_disasm.txt','w') as f:
+              for i in ins:
+                  f.write(f'{i.address:#018x}: {i.mnemonic:8s} {i.op_str}\n')
+          # Find likely returns and accesses to stack-passed args / copied registers.
+          with open('out/f9830_arg_focus.txt','w') as f:
+              for idx,i in enumerate(ins):
+                  s=f'{i.address:#018x}: {i.mnemonic:8s} {i.op_str}'
+                  if any(tok in i.op_str.lower() for tok in ['[rsp + 0x20]','[rsp + 0x28]','[rsp+0x20]','[rsp+0x28]']) or i.mnemonic=='ret':
+                      f.write('\n'+s+'\n')
+                      for q in ins[max(0,idx-12):min(len(ins),idx+28)]:
+                          f.write(f'  {q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          print('image',hex(base),'target_rva',hex(target-base),'insns',len(ins))
+          PY
+          dest="forensics/woo24_ref_width_solver_f9830_20260920"
+          rm -rf "$dest"; mkdir -p "$dest"; cp out/* "$dest/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$dest"
+          git commit -m "forensics: publish WoO24 ref_width solver F9830 trace"
+          git push
