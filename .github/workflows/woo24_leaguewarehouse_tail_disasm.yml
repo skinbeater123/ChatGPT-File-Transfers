@@ -1,0 +1,102 @@
+name: WoO24 League warehouse tail disasm
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_leaguewarehouse_tail_disasm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Tail disassembly with literal map
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/tail.txt
+          import json,pefile,re,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          pe=pefile.PE('woo/GameAssembly.dll')
+          data=Path('woo/GameAssembly.dll').read_bytes()
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+
+          # string literal address map; Il2CppDumper addresses are RVAs.
+          lit={}
+          p=Path('out/dump/stringliteral.json')
+          if p.exists():
+              arr=json.loads(p.read_text(errors='ignore'))
+              if isinstance(arr,list):
+                  for x in arr:
+                      try: lit[base+int(x['address'],16)]=x['value']
+                      except: pass
+
+          # method address map
+          addrmap={}
+          sj=json.loads(Path('out/dump/script.json').read_text())
+          def walk(x):
+              if isinstance(x,dict):
+                  a=x.get('Address'); n=x.get('Name'); sig=x.get('Signature')
+                  if isinstance(a,str):
+                      try: av=int(a,16)
+                      except: av=None
+                      if av: addrmap[av]=(n,sig)
+                  for v in x.values(): walk(v)
+              elif isinstance(x,list):
+                  for v in x: walk(v)
+          walk(sj)
+
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+
+          def dis(name,start,size):
+              print('\n'+'='*140)
+              print(name,hex(start),hex(start+size))
+              print('='*140)
+              oo=off(start)
+              for ins in md.disasm(data[oo:oo+size],start):
+                  extras=[]
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      tgt=ins.operands[0].imm
+                      extras.append('CALL='+hex(tgt)+' '+repr(addrmap.get(tgt)))
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          extras.append('RIP='+hex(tgt))
+                          if tgt in lit: extras.append('LITERAL='+repr(lit[tgt]))
+                          try:
+                              ptr=struct.unpack('<Q',data[off(tgt):off(tgt)+8])[0]
+                              if ptr in lit: extras.append('PTR_LITERAL='+repr(lit[ptr]))
+                          except: pass
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} '+' | '.join(extras))
+
+          dis('load_warehouse MoveNext TAIL',0x1803AD3D6,0x180)
+          dis('load_warehouse callback b__0',0x1803AB790,0xB0)
+          dis('load_warehouse callback b__1',0x1803AB830,0xB0)
+          dis('MGIResources.LoadAsync<object>',0x18097BEF0,0x100)
+          dis('MGIResources.load_async<object>',0x18097C060,0x400)
+          PY
+          cat out/tail.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-leaguewarehouse-tail-disasm
+          path: out/tail.txt
+          retention-days: 1
