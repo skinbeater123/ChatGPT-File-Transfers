@@ -1,0 +1,172 @@
+name: WoO24 yaw stability string consumer probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_yaw_stability_string_consumer_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace tyre/stability string consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_out
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_out/source_hashes.txt
+
+          python3 - <<'PY' > woo24_out/string_consumer_probe.txt
+          import bisect, re, struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+          from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll'); raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False); base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          funcs=sorted(set((base+e.struct.BeginAddress,base+e.struct.EndAddress)
+                           for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[])
+                           if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[f[0] for f in funcs]
+          def func(addr):
+              i=bisect.bisect_right(starts,addr)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=addr<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),
+                             base+text.VirtualAddress))
+          def ops(x):
+              if getattr(x,'id',0)==0:return []
+              try:return x.operands
+              except:return []
+          def rip_targets(x):
+              out=[]
+              for o in ops(x):
+                  if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP:
+                      out.append(x.address+x.size+o.mem.disp)
+              return out
+
+          needles=[
+            'front_grip','rear_grip','rear_lat_grip_f',
+            'long_stiff','stiff_load1','stiff_load2','stiff_c1','stiff_c2',
+            'grip_lf','grip_rf','grip_lr','grip_rr',
+            'stiff_lf','stiff_rf','stiff_lr','stiff_rr',
+            'WHEEL_LF/SELFALIGN','WHEEL_RF/SELFALIGN','WHEEL_LR/SELFALIGN','WHEEL_RR/SELFALIGN',
+            'speed_sens_steering','speed_sens_steering_min_speed','speed_sens_steering_max_speed',
+            'yaw_control_f','intermediate_yaw_control','intermediate_yaw_control_min',
+            'arc_stability_help','postcontact_stability_control_duration',
+            'get_yaw_error: desired_yaw_rate=%f yaw_rate=%f ::: yaw_error=%f',
+            'get_oversteer: tan_drift=%f drift_f=%f ::: oversteer=%f',
+            'GetTorque(wheel_steering=%f,tan_peak_drift_angle=%f)',
+            'arcade_total_yaw_force','arcade_oversteer_bias','arcade_grip','arcade_grip_min',
+            'sim_lite_grip','sim_lite_lateral_grip','sim_lite_longitudinal_grip',
+            'magic_grip','magic_grip_height','grip_fade','grip_fade_start','grip_fade_stop',
+            'slip_ratio','tire_pressure','camber_stiff','camber_grip'
+          ]
+
+          def fileoff_to_va(off):
+              return base+pe.get_rva_from_offset(off)
+
+          print('WOO24 YAW-STABILITY STRING CONSUMER PROBE')
+          print('='*100)
+          targets={}
+          for n in needles:
+              b=n.encode('ascii')
+              start=0
+              while True:
+                  off=raw.find(b,start)
+                  if off<0:break
+                  try:
+                      va=fileoff_to_va(off); targets[va]=n
+                      print(f'STRING {n:64s} VA=0x{va:X} FILE=0x{off:X}')
+                  except: pass
+                  start=off+1
+
+          # Direct and one-level pointer-slot refs.
+          ptr_targets=dict(targets)
+          for va,n in list(targets.items()):
+              packed=struct.pack('<Q',va); pos=0
+              while True:
+                  j=raw.find(packed,pos)
+                  if j<0:break
+                  try:
+                      pva=fileoff_to_va(j)
+                      ptr_targets[pva]=n+' [PTR]'
+                  except: pass
+                  pos=j+1
+
+          refs=[]
+          for x in ins:
+              for t in rip_targets(x):
+                  if t in ptr_targets:
+                      refs.append((x.address,t,ptr_targets[t],func(x.address)))
+
+          print(f'\nrefs={len(refs)}')
+          print('\nXREF INDEX')
+          for a,t,n,f in refs:
+              print(f'{n:72s} ins=0x{a:X} target=0x{t:X} func={f}')
+
+          selected=[]
+          for _,_,_,f in refs:
+              if f and f not in selected:selected.append(f)
+
+          def disasm_func(f, labels):
+              st,en=f
+              print(f'\n### FUNCTION 0x{st:X}-0x{en:X} size={en-st} labels={sorted(labels)}')
+              d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+              for x in d.disasm(pe.get_data(st-base,en-st),st):
+                  extras=[]
+                  for t in rip_targets(x):
+                      if t in ptr_targets: extras.append('STR='+ptr_targets[t])
+                      try:
+                          q=pe.get_data(t-base,4)
+                          if len(q)==4:
+                              fv=struct.unpack('<f',q)[0]
+                              if fv==fv and abs(fv)<1e5: extras.append(f'f32@0x{t:X}={fv:.8g}')
+                      except:pass
+                  print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' | '.join(extras)) if extras else ''))
+
+          labels_by_func={}
+          for a,t,n,f in refs:
+              if f: labels_by_func.setdefault(f,set()).add(n)
+          for f in selected:
+              disasm_func(f,labels_by_func[f])
+
+          # Callers of identified funcs.
+          selected_starts={f[0] for f in selected}
+          print('\nDIRECT CALLERS OF IDENTIFIED FUNCTIONS')
+          for x in ins:
+              if x.mnemonic!='call':continue
+              oo=ops(x)
+              if len(oo)==1 and oo[0].type==X86_OP_IMM and oo[0].imm in selected_starts:
+                  print(f'call 0x{x.address:X} -> 0x{oo[0].imm:X} caller={func(x.address)} target_labels={sorted(labels_by_func.get(func(oo[0].imm),[]))}')
+
+          print('\nEXPORTS RELEVANT TO CONTROL / CONFIG')
+          exports={}
+          if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+              exports={((s.name or b'').decode('ascii','ignore')):s.address for s in pe.DIRECTORY_ENTRY_EXPORT.symbols}
+          for name,rva in sorted(exports.items()):
+              if re.search(r'Wheel|Axle|Config|Steer|Control|Aid|Assist|Physics',name,re.I):
+                  print(f'{name:55s} RVA=0x{rva:X} VA=0x{base+rva:X}')
+          PY
+
+          sed -n '1,26000p' woo24_out/string_consumer_probe.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-yaw-stability-string-consumer-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
