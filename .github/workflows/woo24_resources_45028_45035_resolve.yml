@@ -1,0 +1,67 @@
+name: WoO24 resources 45028-45035 resolve
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_45028_45035_resolve.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve resources.assets target objects
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf unpack out
+          mkdir -p unpack out
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+          python3 - <<'PY' > out/resolve.txt
+          import UnityPy, json, struct
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              n=getattr(v,'name',k)
+              if n.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v; break
+          if sf is None: raise SystemExit('resources.assets missing')
+          byid=sf.objects
+          for pid in range(45028,45036):
+              o=byid.get(pid)
+              print('\n=== PATH',pid,'===')
+              if not o:
+                  print('MISSING'); continue
+              print('TYPE',o.type.name,'SIZE',len(o.get_raw_data()))
+              try:
+                  d=o.read()
+                  print('NAME',repr(getattr(d,'m_Name','') or ''))
+                  if o.type.name=='MonoBehaviour':
+                      try:
+                          p=d.m_Script
+                          print('SCRIPT_PTR',getattr(p,'file_id',None),getattr(p,'path_id',None))
+                          try:
+                              s=p.read()
+                              print('SCRIPT',getattr(s,'m_Namespace',''),getattr(s,'m_ClassName','') or getattr(s,'m_Name',''))
+                          except Exception as e:
+                              print('SCRIPT_READ_ERR',repr(e))
+                      except Exception as e: print('SCRIPT_PTR_ERR',repr(e))
+              except Exception as e:
+                  print('READ_ERR',repr(e))
+              try:
+                  print('TREE',json.dumps(o.read_typetree(),default=str,sort_keys=True))
+              except Exception as e:
+                  print('TREE_ERR',repr(e))
+              print('RAW',bytes(o.get_raw_data()).hex())
+          PY
+          cat out/resolve.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-45028-45035
+          path: out/
+          retention-days: 1
