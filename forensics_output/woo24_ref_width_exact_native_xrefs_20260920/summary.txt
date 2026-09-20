@@ -1,0 +1,3 @@
+base 0x180000000 decoded 546875
+exact target refs 0
+exports {'PhysicsConfigSetFrontAxle': '0x18003bb30', 'PhysicsConfigSetRearAxle': '0x18003bcb0', 'PhysicsConfigSetWheel': '0x18003b9c0'}

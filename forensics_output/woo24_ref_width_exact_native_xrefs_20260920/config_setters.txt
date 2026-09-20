@@ -1,0 +1,223 @@
+
+===== PhysicsConfigSetFrontAxle 0x18003bb30 =====
+0x000000018003bb30: mov      qword ptr [rsp + 8], rcx
+0x000000018003bb35: sub      rsp, 0xe8
+0x000000018003bb3c: lea      rcx, [rip + 0x22d6dd]
+0x000000018003bb43: mov      byte ptr [rip + 0x231092], 1
+0x000000018003bb4a: mov      rdx, rsp
+0x000000018003bb4d: call     0x1801fe710
+0x000000018003bb52: cmp      byte ptr [rip + 0x231084], 0
+0x000000018003bb59: jne      0x18003bc98
+0x000000018003bb5f: cmp      byte ptr [rip + 0x237c76], 0
+0x000000018003bb66: je       0x18003bb87
+0x000000018003bb68: lea      r9, [rip + 0x1ee2b1]
+0x000000018003bb6f: mov      edx, 0x86
+0x000000018003bb74: lea      r8, [rip + 0x1ee1a5]
+0x000000018003bb7b: lea      rcx, [rip + 0x1e8a9e]
+0x000000018003bb82: call     0x18002f280
+0x000000018003bb87: mov      rcx, qword ptr [rsp + 0xf0]
+0x000000018003bb8f: lea      rdx, [rsp + 0x20]
+0x000000018003bb94: lea      rdx, [rdx + 0x80]
+0x000000018003bb9b: mov      rax, qword ptr [rcx + 0xb0]
+0x000000018003bba2: movups   xmm0, xmmword ptr [rcx]
+0x000000018003bba5: movups   xmm1, xmmword ptr [rcx + 0x10]
+0x000000018003bba9: movups   xmmword ptr [rdx - 0x80], xmm0
+0x000000018003bbad: movups   xmm0, xmmword ptr [rcx + 0x20]
+0x000000018003bbb1: movups   xmmword ptr [rdx - 0x70], xmm1
+0x000000018003bbb5: movups   xmm1, xmmword ptr [rcx + 0x30]
+0x000000018003bbb9: movups   xmmword ptr [rdx - 0x60], xmm0
+0x000000018003bbbd: movups   xmm0, xmmword ptr [rcx + 0x40]
+0x000000018003bbc1: movups   xmmword ptr [rdx - 0x50], xmm1
+0x000000018003bbc5: movups   xmm1, xmmword ptr [rcx + 0x50]
+0x000000018003bbc9: movups   xmmword ptr [rdx - 0x40], xmm0
+0x000000018003bbcd: movups   xmm0, xmmword ptr [rcx + 0x60]
+0x000000018003bbd1: movups   xmmword ptr [rdx - 0x30], xmm1
+0x000000018003bbd5: movups   xmm1, xmmword ptr [rcx + 0x80]
+0x000000018003bbdc: movups   xmmword ptr [rdx - 0x20], xmm0
+0x000000018003bbe0: movups   xmm0, xmmword ptr [rcx + 0x70]
+0x000000018003bbe4: movups   xmmword ptr [rdx - 0x10], xmm0
+0x000000018003bbe8: movups   xmm0, xmmword ptr [rcx + 0x90]
+0x000000018003bbef: movups   xmmword ptr [rdx], xmm1
+0x000000018003bbf2: movups   xmm1, xmmword ptr [rcx + 0xa0]
+0x000000018003bbf9: movups   xmmword ptr [rdx + 0x10], xmm0
+0x000000018003bbfd: movups   xmmword ptr [rdx + 0x20], xmm1
+0x000000018003bc01: mov      qword ptr [rdx + 0x30], rax
+0x000000018003bc05: mov      eax, dword ptr [rcx + 0xb8]
+0x000000018003bc0b: lea      rcx, [rip + 0x237b0e]
+0x000000018003bc12: mov      dword ptr [rdx + 0x38], eax
+0x000000018003bc15: lea      rax, [rsp + 0x20]
+0x000000018003bc1a: mov      byte ptr [rsp + 0xdc], 1
+0x000000018003bc22: movups   xmm0, xmmword ptr [rax]
+0x000000018003bc25: movups   xmm1, xmmword ptr [rax + 0x10]
+0x000000018003bc29: movups   xmmword ptr [rcx], xmm0
+0x000000018003bc2c: movups   xmm0, xmmword ptr [rax + 0x20]
+0x000000018003bc30: movups   xmmword ptr [rcx + 0x10], xmm1
+0x000000018003bc34: movups   xmm1, xmmword ptr [rax + 0x30]
+0x000000018003bc38: movups   xmmword ptr [rcx + 0x20], xmm0
+0x000000018003bc3c: movups   xmm0, xmmword ptr [rax + 0x40]
+0x000000018003bc40: movups   xmmword ptr [rcx + 0x30], xmm1
+0x000000018003bc44: movups   xmm1, xmmword ptr [rax + 0x50]
+0x000000018003bc48: movups   xmmword ptr [rcx + 0x40], xmm0
+0x000000018003bc4c: movups   xmm0, xmmword ptr [rax + 0x60]
+0x000000018003bc50: movups   xmmword ptr [rcx + 0x50], xmm1
+0x000000018003bc54: movups   xmm1, xmmword ptr [rax + 0x70]
+0x000000018003bc58: movups   xmmword ptr [rcx + 0x60], xmm0
+0x000000018003bc5c: movups   xmm0, xmmword ptr [rax + 0x80]
+0x000000018003bc63: movups   xmmword ptr [rcx + 0x70], xmm1
+0x000000018003bc67: movups   xmm1, xmmword ptr [rax + 0x90]
+0x000000018003bc6e: movups   xmmword ptr [rcx + 0x80], xmm0
+0x000000018003bc75: movups   xmm0, xmmword ptr [rax + 0xa0]
+0x000000018003bc7c: movups   xmmword ptr [rcx + 0x90], xmm1
+0x000000018003bc83: movups   xmm1, xmmword ptr [rax + 0xb0]
+0x000000018003bc8a: movups   xmmword ptr [rcx + 0xa0], xmm0
+0x000000018003bc91: movups   xmmword ptr [rcx + 0xb0], xmm1
+0x000000018003bc98: mov      byte ptr [rip + 0x230f3d], 0
+0x000000018003bc9f: add      rsp, 0xe8
+0x000000018003bca6: ret      
+
+===== PhysicsConfigSetRearAxle 0x18003bcb0 =====
+0x000000018003bcb0: mov      qword ptr [rsp + 8], rcx
+0x000000018003bcb5: sub      rsp, 0xe8
+0x000000018003bcbc: lea      rcx, [rip + 0x22d55d]
+0x000000018003bcc3: mov      byte ptr [rip + 0x230f12], 1
+0x000000018003bcca: mov      rdx, rsp
+0x000000018003bccd: call     0x1801fe710
+0x000000018003bcd2: cmp      byte ptr [rip + 0x230f04], 0
+0x000000018003bcd9: jne      0x18003be18
+0x000000018003bcdf: cmp      byte ptr [rip + 0x237a36], 0
+0x000000018003bce6: je       0x18003bd07
+0x000000018003bce8: lea      r9, [rip + 0x1ee159]
+0x000000018003bcef: mov      edx, 0x8c
+0x000000018003bcf4: lea      r8, [rip + 0x1ee025]
+0x000000018003bcfb: lea      rcx, [rip + 0x1e891e]
+0x000000018003bd02: call     0x18002f280
+0x000000018003bd07: mov      rcx, qword ptr [rsp + 0xf0]
+0x000000018003bd0f: lea      rdx, [rsp + 0x20]
+0x000000018003bd14: lea      rdx, [rdx + 0x80]
+0x000000018003bd1b: mov      rax, qword ptr [rcx + 0xb0]
+0x000000018003bd22: movups   xmm0, xmmword ptr [rcx]
+0x000000018003bd25: movups   xmm1, xmmword ptr [rcx + 0x10]
+0x000000018003bd29: movups   xmmword ptr [rdx - 0x80], xmm0
+0x000000018003bd2d: movups   xmm0, xmmword ptr [rcx + 0x20]
+0x000000018003bd31: movups   xmmword ptr [rdx - 0x70], xmm1
+0x000000018003bd35: movups   xmm1, xmmword ptr [rcx + 0x30]
+0x000000018003bd39: movups   xmmword ptr [rdx - 0x60], xmm0
+0x000000018003bd3d: movups   xmm0, xmmword ptr [rcx + 0x40]
+0x000000018003bd41: movups   xmmword ptr [rdx - 0x50], xmm1
+0x000000018003bd45: movups   xmm1, xmmword ptr [rcx + 0x50]
+0x000000018003bd49: movups   xmmword ptr [rdx - 0x40], xmm0
+0x000000018003bd4d: movups   xmm0, xmmword ptr [rcx + 0x60]
+0x000000018003bd51: movups   xmmword ptr [rdx - 0x30], xmm1
+0x000000018003bd55: movups   xmm1, xmmword ptr [rcx + 0x80]
+0x000000018003bd5c: movups   xmmword ptr [rdx - 0x20], xmm0
+0x000000018003bd60: movups   xmm0, xmmword ptr [rcx + 0x70]
+0x000000018003bd64: movups   xmmword ptr [rdx - 0x10], xmm0
+0x000000018003bd68: movups   xmm0, xmmword ptr [rcx + 0x90]
+0x000000018003bd6f: movups   xmmword ptr [rdx], xmm1
+0x000000018003bd72: movups   xmm1, xmmword ptr [rcx + 0xa0]
+0x000000018003bd79: movups   xmmword ptr [rdx + 0x10], xmm0
+0x000000018003bd7d: movups   xmmword ptr [rdx + 0x20], xmm1
+0x000000018003bd81: mov      qword ptr [rdx + 0x30], rax
+0x000000018003bd85: mov      eax, dword ptr [rcx + 0xb8]
+0x000000018003bd8b: lea      rcx, [rip + 0x2378ce]
+0x000000018003bd92: mov      dword ptr [rdx + 0x38], eax
+0x000000018003bd95: lea      rax, [rsp + 0x20]
+0x000000018003bd9a: mov      byte ptr [rsp + 0xdc], 1
+0x000000018003bda2: movups   xmm0, xmmword ptr [rax]
+0x000000018003bda5: movups   xmm1, xmmword ptr [rax + 0x10]
+0x000000018003bda9: movups   xmmword ptr [rcx], xmm0
+0x000000018003bdac: movups   xmm0, xmmword ptr [rax + 0x20]
+0x000000018003bdb0: movups   xmmword ptr [rcx + 0x10], xmm1
+0x000000018003bdb4: movups   xmm1, xmmword ptr [rax + 0x30]
+0x000000018003bdb8: movups   xmmword ptr [rcx + 0x20], xmm0
+0x000000018003bdbc: movups   xmm0, xmmword ptr [rax + 0x40]
+0x000000018003bdc0: movups   xmmword ptr [rcx + 0x30], xmm1
+0x000000018003bdc4: movups   xmm1, xmmword ptr [rax + 0x50]
+0x000000018003bdc8: movups   xmmword ptr [rcx + 0x40], xmm0
+0x000000018003bdcc: movups   xmm0, xmmword ptr [rax + 0x60]
+0x000000018003bdd0: movups   xmmword ptr [rcx + 0x50], xmm1
+0x000000018003bdd4: movups   xmm1, xmmword ptr [rax + 0x70]
+0x000000018003bdd8: movups   xmmword ptr [rcx + 0x60], xmm0
+0x000000018003bddc: movups   xmm0, xmmword ptr [rax + 0x80]
+0x000000018003bde3: movups   xmmword ptr [rcx + 0x70], xmm1
+0x000000018003bde7: movups   xmm1, xmmword ptr [rax + 0x90]
+0x000000018003bdee: movups   xmmword ptr [rcx + 0x80], xmm0
+0x000000018003bdf5: movups   xmm0, xmmword ptr [rax + 0xa0]
+0x000000018003bdfc: movups   xmmword ptr [rcx + 0x90], xmm1
+0x000000018003be03: movups   xmm1, xmmword ptr [rax + 0xb0]
+0x000000018003be0a: movups   xmmword ptr [rcx + 0xa0], xmm0
+0x000000018003be11: movups   xmmword ptr [rcx + 0xb0], xmm1
+0x000000018003be18: mov      byte ptr [rip + 0x230dbd], 0
+0x000000018003be1f: add      rsp, 0xe8
+0x000000018003be26: ret      
+
+===== PhysicsConfigSetWheel 0x18003b9c0 =====
+0x000000018003b9c0: mov      qword ptr [rsp + 8], rcx
+0x000000018003b9c5: sub      rsp, 0xd8
+0x000000018003b9cc: lea      rcx, [rip + 0x22d84d]
+0x000000018003b9d3: mov      byte ptr [rip + 0x231202], 1
+0x000000018003b9da: mov      rdx, rsp
+0x000000018003b9dd: call     0x1801fe710
+0x000000018003b9e2: cmp      byte ptr [rip + 0x2311f4], 0
+0x000000018003b9e9: jne      0x18003bb14
+0x000000018003b9ef: cmp      byte ptr [rip + 0x230e96], 0
+0x000000018003b9f6: je       0x18003ba17
+0x000000018003b9f8: lea      r9, [rip + 0x1ee401]
+0x000000018003b9ff: mov      edx, 0x80
+0x000000018003ba04: lea      r8, [rip + 0x1ee315]
+0x000000018003ba0b: lea      rcx, [rip + 0x1e8c0e]
+0x000000018003ba12: call     0x18002f280
+0x000000018003ba17: mov      rcx, qword ptr [rsp + 0xe0]
+0x000000018003ba1f: lea      rdx, [rsp + 0x20]
+0x000000018003ba24: mov      rax, qword ptr [rcx + 0xa0]
+0x000000018003ba2b: movups   xmm0, xmmword ptr [rcx]
+0x000000018003ba2e: movups   xmm1, xmmword ptr [rcx + 0x10]
+0x000000018003ba32: movups   xmmword ptr [rdx], xmm0
+0x000000018003ba35: movups   xmm0, xmmword ptr [rcx + 0x20]
+0x000000018003ba39: movups   xmmword ptr [rdx + 0x10], xmm1
+0x000000018003ba3d: movups   xmm1, xmmword ptr [rcx + 0x30]
+0x000000018003ba41: movups   xmmword ptr [rdx + 0x20], xmm0
+0x000000018003ba45: movups   xmm0, xmmword ptr [rcx + 0x40]
+0x000000018003ba49: movups   xmmword ptr [rdx + 0x30], xmm1
+0x000000018003ba4d: movups   xmm1, xmmword ptr [rcx + 0x50]
+0x000000018003ba51: movups   xmmword ptr [rdx + 0x40], xmm0
+0x000000018003ba55: movups   xmm0, xmmword ptr [rcx + 0x60]
+0x000000018003ba59: movups   xmmword ptr [rdx + 0x50], xmm1
+0x000000018003ba5d: movups   xmm1, xmmword ptr [rcx + 0x70]
+0x000000018003ba61: movups   xmmword ptr [rdx + 0x60], xmm0
+0x000000018003ba65: movups   xmm0, xmmword ptr [rcx + 0x80]
+0x000000018003ba6c: movups   xmmword ptr [rdx + 0x70], xmm1
+0x000000018003ba70: movups   xmm1, xmmword ptr [rcx + 0x90]
+0x000000018003ba77: movups   xmmword ptr [rdx + 0x80], xmm0
+0x000000018003ba7e: movups   xmmword ptr [rdx + 0x90], xmm1
+0x000000018003ba85: mov      qword ptr [rdx + 0xa0], rax
+0x000000018003ba8c: mov      eax, dword ptr [rcx + 0xa8]
+0x000000018003ba92: lea      rcx, [rip + 0x230d47]
+0x000000018003ba99: mov      dword ptr [rdx + 0xa8], eax
+0x000000018003ba9f: lea      rax, [rsp + 0x20]
+0x000000018003baa4: mov      byte ptr [rsp + 0xcc], 1
+0x000000018003baac: movups   xmm0, xmmword ptr [rax]
+0x000000018003baaf: movups   xmm1, xmmword ptr [rax + 0x10]
+0x000000018003bab3: movups   xmmword ptr [rcx], xmm0
+0x000000018003bab6: movups   xmm0, xmmword ptr [rax + 0x20]
+0x000000018003baba: movups   xmmword ptr [rcx + 0x10], xmm1
+0x000000018003babe: movups   xmm1, xmmword ptr [rax + 0x30]
+0x000000018003bac2: movups   xmmword ptr [rcx + 0x20], xmm0
+0x000000018003bac6: movups   xmm0, xmmword ptr [rax + 0x40]
+0x000000018003baca: movups   xmmword ptr [rcx + 0x30], xmm1
+0x000000018003bace: movups   xmm1, xmmword ptr [rax + 0x50]
+0x000000018003bad2: movups   xmmword ptr [rcx + 0x40], xmm0
+0x000000018003bad6: movups   xmm0, xmmword ptr [rax + 0x60]
+0x000000018003bada: movups   xmmword ptr [rcx + 0x50], xmm1
+0x000000018003bade: movups   xmm1, xmmword ptr [rax + 0x70]
+0x000000018003bae2: movups   xmmword ptr [rcx + 0x60], xmm0
+0x000000018003bae6: movups   xmm0, xmmword ptr [rax + 0x80]
+0x000000018003baed: movups   xmmword ptr [rcx + 0x70], xmm1
+0x000000018003baf1: movups   xmm1, xmmword ptr [rax + 0x90]
+0x000000018003baf8: movups   xmmword ptr [rcx + 0x80], xmm0
+0x000000018003baff: movups   xmm0, xmmword ptr [rax + 0xa0]
+0x000000018003bb06: movups   xmmword ptr [rcx + 0x90], xmm1
+0x000000018003bb0d: movups   xmmword ptr [rcx + 0xa0], xmm0
+0x000000018003bb14: mov      byte ptr [rip + 0x2310c1], 0
+0x000000018003bb1b: add      rsp, 0xd8
+0x000000018003bb22: ret      
