@@ -1,0 +1,166 @@
+name: WoO24 yaw stability string probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_yaw_stability_string_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace tyre-force and yaw-stability functions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p woo24_phys woo24_out
+          unzip -q phys.zip -d woo24_phys
+          python3 -m pip install --disable-pip-version-check --quiet pefile capstone
+          sha256sum phys.zip woo24_phys/physimpl.dll > woo24_out/source_hashes.txt
+
+          python3 - <<'PY' > woo24_out/yaw_stability_strings.txt
+          import bisect,re,struct
+          from pathlib import Path
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_IMM,X86_OP_MEM,X86_REG_RIP
+
+          p=Path('woo24_phys/physimpl.dll')
+          raw=p.read_bytes()
+          pe=pefile.PE(str(p),fast_load=False)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXCEPTION']])
+          funcs=sorted(set(
+              (base+e.struct.BeginAddress,base+e.struct.EndAddress)
+              for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[])
+              if e.struct.EndAddress>e.struct.BeginAddress
+          ))
+          starts=[f[0] for f in funcs]
+          def func(addr):
+              i=bisect.bisect_right(starts,addr)-1
+              return funcs[i] if i>=0 and funcs[i][0]<=addr<funcs[i][1] else None
+
+          text=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=list(md.disasm(
+              pe.get_data(text.VirtualAddress,max(text.Misc_VirtualSize,text.SizeOfRawData)),
+              base+text.VirtualAddress
+          ))
+
+          def operands(x):
+              if getattr(x,'id',0)==0:return []
+              try:return x.operands
+              except:return []
+          def rips(x):
+              out=[]
+              for o in operands(x):
+                  if o.type==X86_OP_MEM and o.mem.base==X86_REG_RIP:
+                      out.append(x.address+x.size+o.mem.disp)
+              return out
+
+          needles=[
+            'front_grip','rear_grip','rear_lat_grip_f',
+            'long_stiff','stiff_c1','stiff_c2','stiff_load1','stiff_load2',
+            'camber_stiff','bulge_grip','magic_grip','magic_grip_height',
+            'WHEEL_LF/SELFALIGN','WHEEL_RF/SELFALIGN','WHEEL_LR/SELFALIGN','WHEEL_RR/SELFALIGN',
+            'yaw_control_f','intermediate_yaw_control','intermediate_yaw_control_min',
+            'postcontact_stability_control_duration','arc_stability_help',
+            'speed_sens_steering','speed_sens_steering_min_speed','speed_sens_steering_max_speed',
+            'arcade_total_yaw_force','arcade_oversteer_bias',
+            'get_yaw_error: desired_yaw_rate=%f yaw_rate=%f ::: yaw_error=%f',
+            'get_oversteer: tan_drift=%f drift_f=%f ::: oversteer=%f',
+            'slip_ratio','tire_pressure','tire_pressure_can_increase_grip'
+          ]
+
+          def fileoff_to_va(off):
+              return base+pe.get_rva_from_offset(off)
+
+          print('WOO24 NATIVE TYRE FORCE / YAW STABILITY STRING PROBE')
+          print('='*100)
+
+          target_vas={}
+          for needle in needles:
+              b=needle.encode('ascii')
+              pos=0
+              found=[]
+              while True:
+                  off=raw.find(b,pos)
+                  if off<0:break
+                  try: va=fileoff_to_va(off); found.append((off,va)); target_vas[va]=needle
+                  except: pass
+                  pos=off+1
+              print(f'NEEDLE {needle!r}: {[(hex(o),hex(v)) for o,v in found]}')
+
+          refs=[]
+          for i,x in enumerate(ins):
+              for t in rips(x):
+                  if t in target_vas:
+                      refs.append((x.address,t,target_vas[t],func(x.address),i))
+
+          print('\nDIRECT RIP XREFS')
+          for a,t,label,f,i in refs:
+              print(f'0x{a:X} -> 0x{t:X} func={f} {label}')
+
+          # Pointer slots for string-table indirection.
+          extra=[]
+          for sva,label in list(target_vas.items()):
+              packed=struct.pack('<Q',sva)
+              pos=0
+              slots=[]
+              while True:
+                  off=raw.find(packed,pos)
+                  if off<0:break
+                  try:slots.append(fileoff_to_va(off))
+                  except:pass
+                  pos=off+1
+              for slot in slots:
+                  for i,x in enumerate(ins):
+                      if slot in rips(x):
+                          extra.append((x.address,slot,label,func(x.address),i))
+          print('\nINDIRECT STRING-SLOT XREFS')
+          for a,t,label,f,i in extra:
+              print(f'0x{a:X} -> slot 0x{t:X} func={f} {label}')
+
+          selected=[]
+          for rec in refs+extra:
+              f=rec[3]
+              if f and f not in selected:selected.append(f)
+
+          def disasm_func(f):
+              st,en=f
+              print(f'\n### FUNCTION 0x{st:X}-0x{en:X} size={en-st}')
+              d=Cs(CS_ARCH_X86,CS_MODE_64); d.detail=True
+              for x in d.disasm(pe.get_data(st-base,en-st),st):
+                  ext=[]
+                  for t in rips(x):
+                      if t in target_vas: ext.append('STR='+target_vas[t])
+                  print(f'0x{x.address:X}: {x.mnemonic:<8} {x.op_str}' + ((' ; '+' | '.join(ext)) if ext else ''))
+
+          print('\nCONTAINING FUNCTIONS')
+          for f in selected[:40]:
+              disasm_func(f)
+
+          targets={f[0] for f in selected}
+          print('\nDIRECT CALLERS')
+          for x in ins:
+              if x.mnemonic!='call':continue
+              oo=operands(x)
+              if len(oo)==1 and oo[0].type==X86_OP_IMM and oo[0].imm in targets:
+                  print(f'0x{x.address:X} -> 0x{oo[0].imm:X} caller={func(x.address)}')
+          PY
+
+          sed -n '1,30000p' woo24_out/yaw_stability_strings.txt
+
+      - name: Upload derived text only
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-yaw-stability-string-probe
+          path: woo24_out/
+          if-no-files-found: error
+          retention-days: 1
