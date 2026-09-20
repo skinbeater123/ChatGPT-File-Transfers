@@ -1,0 +1,97 @@
+name: WoO24 phys axle global flow trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_phys_axle_global_flow_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace front/rear axle globals into runtime objects
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          rear=0x180273660
+          front=0x180273720
+          blocks={'REAR_AXLE':(rear,rear+0xBC),'FRONT_AXLE':(front,front+0xBC)}
+
+          def fileoff(va):
+              try:return pe.get_offset_from_rva(va-base)
+              except:return None
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          insns=list(md.disasm(code,start))
+
+          print('GLOBAL BLOCKS',blocks)
+
+          refs=[]
+          for idx,ins in enumerate(insns):
+              if ins.id==0:continue
+              for op in ins.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                      tgt=ins.address+ins.size+op.mem.disp
+                      for name,(a,b) in blocks.items():
+                          if a<=tgt<b:
+                              refs.append((idx,name,tgt))
+          print('DIRECT_GLOBAL_REFS',len(refs))
+          for idx,name,tgt in refs:
+              ins=insns[idx]
+              print(f'\n{name} target={tgt:#x} rel={tgt-blocks[name][0]:#x} xref={ins.address:#x}')
+              for j in range(max(0,idx-18),min(len(insns),idx+45)):
+                  p=insns[j]; mark='>>' if j==idx else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          # Internal PhysicsCreateCar implementation.
+          for addr,label,size in [
+              (0x180095660,'PhysicsCreateCar_internal',0x1800),
+              (0x18003bb30,'SetFrontAxle',0x180),
+              (0x18003bcb0,'SetRearAxle',0x180)
+          ]:
+              print('\n'+'='*140+'\n'+label+' '+hex(addr)+'\n'+'='*140)
+              o=fileoff(addr)
+              if o is None:continue
+              m2=Cs(CS_ARCH_X86,CS_MODE_64);m2.detail=True
+              for k,ins in enumerate(m2.disasm(data[o:o+size],addr)):
+                  annot=''
+                  if ins.id:
+                      for op in ins.operands:
+                          if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                              tgt=ins.address+ins.size+op.mem.disp
+                              for name,(a,b) in blocks.items():
+                                  if a<=tgt<b: annot+=f' [{name}+{tgt-a:#x}]'
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}{annot}')
+                  if label!='PhysicsCreateCar_internal' and ins.mnemonic=='ret' and k>5:break
+
+          # Direct call xrefs into PhysicsCreateCar_internal and functions called by it.
+          print('\nCALLERS_OF_INTERNAL_CREATE')
+          for idx,ins in enumerate(insns):
+              if ins.id and ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM and ins.operands[0].imm==0x180095660:
+                  print(hex(ins.address))
+          PY
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-phys-axle-global-flow
+          path: out/result.txt
+          retention-days: 2
