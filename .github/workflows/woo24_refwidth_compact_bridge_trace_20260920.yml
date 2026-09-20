@@ -1,0 +1,132 @@
+name: WoO24 ref_width compact bridge trace 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_refwidth_compact_bridge_trace_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/bridge.txt
+          import pefile,bisect,collections,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; raw=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          funcs=sorted(set((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[a for a,b in funcs]
+          def off(v):return pe.get_offset_from_rva(v-B)
+          def bound(v):
+            i=bisect.bisect_right(starts,v)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=v<funcs[i][1] else None
+          def dis(f):
+            a,b=f; md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+            return list(md.disasm(raw[off(a):off(a)+(b-a)],a))
+          def memops(x):
+            try:return [o for o in x.operands if o.type==X86_OP_MEM]
+            except:return []
+          def cstr(v):
+            try:
+              b=raw[off(v):off(v)+260].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=q<127 or q in (9,10,13) for q in b):return b.decode('ascii','replace')
+            except:pass
+          def f32(v):
+            try:return struct.unpack('<f',raw[off(v):off(v)+4])[0]
+            except:return None
+          allf={f:dis(f) for f in funcs}
+          target=0x180002b30
+          tf=bound(target)
+          print('=== TRANSLATOR FULL ===',tuple(hex(x) for x in tf))
+          for x in allf[tf]:
+            ann=[]
+            for o in memops(x):
+              if o.mem.base==X86_REG_RIP:
+                v=x.address+x.size+o.mem.disp; ann.append(f'RIP={v:#x} f={f32(v)!r} s={cstr(v)!r}')
+            print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:72s} {" | ".join(ann)}')
+
+          print('\n=== DIRECT CALLERS TRANSLATOR ===')
+          callers=[]
+          for f,ii in allf.items():
+            for i,x in enumerate(ii):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==target:
+                callers.append((f,i,x))
+                print('\nCALL',hex(x.address),'caller',tuple(hex(z) for z in f))
+                for y in ii[max(0,i-45):min(len(ii),i+75)]:
+                  ann=[]
+                  for o in memops(y):
+                    if o.mem.base==X86_REG_RIP:
+                      v=y.address+y.size+o.mem.disp; s=cstr(v)
+                      if s:ann.append('STR='+repr(s))
+                  print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str:72s} {" | ".join(ann)}')
+          print('CALLER_COUNT',len(callers))
+
+          print('\n=== FUNCTIONS WITH COHERENT COMPACT AXLE LAYOUT INCLUDING +6C ===')
+          # Output mapping inferred from translator:
+          # source 70..C0 -> dest 1c..6c with sparse long_frict at 60/fade_start5c/fade_stop64/fade68/refwidth6c.
+          compact={0x1c:'magic_b',0x20:'magic_c',0x24:'magic_d',0x28:'magic_e',
+                   0x2c:'frict_load1',0x30:'frict_k1',0x34:'frict_load2',0x38:'frict_k2',
+                   0x3c:'stiff_load1',0x40:'stiff_c1',0x44:'stiff_load2',0x48:'stiff_c2',
+                   0x4c:'camber_stiff',0x50:'camber_peak',0x54:'camber_grip',
+                   0x58:'long_stiff',0x5c:'fade_start',0x60:'long_frict_or_dest60',
+                   0x64:'fade_stop',0x68:'fade',0x6c:'ref_width'}
+          # Note translator exact output decides 5c/60 mapping; print only observed.
+          cands=[]
+          for f,ii in allf.items():
+            br=collections.defaultdict(list)
+            for i,x in enumerate(ii):
+              for o in memops(x):
+                if o.mem.base and o.mem.index==0 and o.mem.disp in compact:
+                  reg=x.reg_name(o.mem.base); br[reg].append((o.mem.disp,i,x))
+            for reg,h in br.items():
+              offs={d for d,i,x in h}
+              if 0x6c in offs and len(offs)>=5:
+                cands.append((f,reg,h,offs))
+          print('COMPACT_CANDIDATES',len(cands))
+          for f,reg,h,offs in cands:
+            print(f'\nCOMPACT func={f[0]:#x}-{f[1]:#x} base={reg} fields={[compact[o] for o in sorted(offs)]}')
+            ii=allf[f]
+            for d,i,x in h:
+              print(f'  {x.address:#x}: {x.mnemonic:8s} {x.op_str} ; {compact[d]}')
+            # context only for +6c
+            for d,i,x in h:
+              if d==0x6c:
+                print(' -- REF_WIDTH+6C CONTEXT --')
+                for y in ii[max(0,i-18):min(len(ii),i+35)]:
+                  ann=[]
+                  for o in memops(y):
+                    if o.mem.base==X86_REG_RIP:
+                      v=y.address+y.size+o.mem.disp
+                      ann.append(f'RIP={v:#x} f={f32(v)!r} s={cstr(v)!r}')
+                  print(f'  {y.address:016X}: {y.mnemonic:8s} {y.op_str:70s} {" | ".join(ann)}')
+
+          print('\n=== ALL DEST+6C-LIKE FLOAT OPS (NON-STACK) WITH NEIGHBOR COMPACT FIELDS ===')
+          for f,ii in allf.items():
+            for i,x in enumerate(ii):
+              for o in memops(x):
+                if o.mem.disp==0x6c and o.mem.base not in (0,X86_REG_RSP,X86_REG_RBP,X86_REG_RIP):
+                  reg=x.reg_name(o.mem.base)
+                  # require same reg references at least one of 58,5c,60,64,68 nearby in function
+                  near=[]
+                  for y in ii:
+                    for q in memops(y):
+                      if q.mem.base and y.reg_name(q.mem.base)==reg and q.mem.index==0 and q.mem.disp in (0x58,0x5c,0x60,0x64,0x68):
+                        near.append(y)
+                  if near:
+                    print(f'\n6C {x.address:#x} func={f[0]:#x}-{f[1]:#x} base={reg} {x.mnemonic} {x.op_str} neighbors={len(near)}')
+                    for y in ii[max(0,i-15):min(len(ii),i+28)]:
+                      print(f'  {y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+                  break
+          PY
+          cat out/bridge.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-refwidth-compact-bridge
+          path: out/bridge.txt
+          retention-days: 3
