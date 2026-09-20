@@ -1,0 +1,124 @@
+name: WoO24 resources all fileID2 probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_all_fileid2_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inventory all resources.assets PPtrs to sharedassets0
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/all_fileid2.txt
+          from collections import Counter, defaultdict
+          import json
+          import UnityPy
+
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              n=getattr(v,'name',k)
+              if n.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v; break
+          if sf is None:
+              raise SystemExit('resources.assets not loaded')
+
+          objs=sf.objects.values() if hasattr(sf.objects,'values') else sf.objects
+
+          def collect(x,path=''):
+              out=[]
+              if isinstance(x,dict):
+                  if 'm_FileID' in x and 'm_PathID' in x:
+                      try: out.append((path or '<root>',int(x['m_FileID']),int(x['m_PathID'])))
+                      except Exception: pass
+                  for k,v in x.items():
+                      out += collect(v, f'{path}.{k}' if path else str(k))
+              elif isinstance(x,list):
+                  for i,v in enumerate(x):
+                      out += collect(v,f'{path}[{i}]')
+              return out
+
+          def script_name(o,d):
+              if o.type.name!='MonoBehaviour': return ''
+              try:
+                  sc=d.m_Script.read()
+                  return getattr(sc,'m_ClassName','') or getattr(sc,'m_Name','') or ''
+              except Exception:
+                  return ''
+
+          total_objs=0
+          source_records=[]
+          by_type=Counter()
+          by_script=Counter()
+          target_counts=Counter()
+          target_sources=defaultdict(list)
+          for o in objs:
+              total_objs += 1
+              try:
+                  d=o.read()
+                  tree=o.read_typetree()
+              except Exception:
+                  continue
+              refs=[r for r in collect(tree) if r[1]==2 and r[2]]
+              if not refs:
+                  continue
+              name=getattr(d,'m_Name','') or ''
+              script=script_name(o,d)
+              source_records.append((o.path_id,o.type.name,name,script,refs))
+              by_type[o.type.name]+=len(refs)
+              if script: by_script[script]+=len(refs)
+              for p,fid,pid in refs:
+                  target_counts[pid]+=1
+                  if len(target_sources[pid])<12:
+                      target_sources[pid].append((o.path_id,o.type.name,name,script,p))
+
+          print('TOTAL_OBJECTS',total_objs)
+          print('SOURCE_OBJECTS_WITH_FILEID2',len(source_records))
+          print('TOTAL_FILEID2_REFS',sum(target_counts.values()))
+          print('UNIQUE_TARGET_PATHIDS',len(target_counts))
+
+          print('\nBY_SOURCE_TYPE')
+          for k,v in by_type.most_common():
+              print(v,k)
+
+          print('\nBY_MONOBEHAVIOUR_SCRIPT')
+          for k,v in by_script.most_common(200):
+              print(v,k)
+
+          print('\nTOP_TARGET_PATHIDS')
+          for pid,c in target_counts.most_common(300):
+              print('TARGET',pid,'REFS',c)
+              for src in target_sources[pid]:
+                  oid,typ,name,script,path=src
+                  print(f'  src={oid} type={typ} name={name!r} script={script!r} field={path}')
+
+          print('\nALL_SOURCE_OBJECTS')
+          for oid,typ,name,script,refs in source_records:
+              print(f'SOURCE {oid} type={typ} name={name!r} script={script!r} refs={len(refs)}')
+              for p,fid,pid in refs[:100]:
+                  print(f'  {p} -> fileID={fid} pathID={pid}')
+          PY
+
+          cat out/all_fileid2.txt
+
+      - name: Upload derived results
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-all-fileid2-probe
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
