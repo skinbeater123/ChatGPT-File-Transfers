@@ -1,0 +1,44 @@
+name: WoO24 axle translator ref_width trace 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_translator_ref_width_trace_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf phys_unpack out14
+          mkdir -p phys_unpack out14
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out14/translator.txt
+          import pefile
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          rva=0x7cbd0; off=pe.get_offset_from_rva(rva)
+          ins=list(md.disasm(raw[off:off+0x1000],base+rva))
+          for i in ins:
+              marks=[]
+              for op in i.operands:
+                  if op.type==X86_OP_MEM:
+                      if op.mem.disp==0xb8: marks.append('*** DISP_B8 ***')
+                      if op.mem.disp in (0xb0,0xb4,0xb8,0xbc): marks.append(f'disp={op.mem.disp:#x}')
+              print(f'{i.address:#018x}: {i.mnemonic:8s} {i.op_str}', ' '.join(marks))
+              if i.mnemonic=='ret' and i.address>base+rva+5:
+                  break
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-translator-ref-width-trace
+          path: out14/
+          retention-days: 3
