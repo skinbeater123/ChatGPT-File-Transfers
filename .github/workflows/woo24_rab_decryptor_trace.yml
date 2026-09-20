@@ -1,0 +1,138 @@
+name: WoO24 RAB decryptor trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rab_decryptor_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover managed/native RAB decryptor
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf woo tools out
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/managed.txt
+          from pathlib import Path
+          import re
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+          terms=['AssetBundleFileLoader','decrypt','Decrypt','AES','Aes','SHA256','SHA-256','Rijndael','Cryptography','LoadBundle','load_file_thread','.rab']
+          for term in terms:
+              print('\n'+'='*120)
+              print('TERM',term)
+              print('='*120)
+              hits=list(re.finditer(re.escape(term),txt))
+              print('HITS',len(hits))
+              for m in hits[:50]:
+                  print(txt[max(0,m.start()-2500):min(len(txt),m.end()+7000)])
+          PY
+
+          python3 -m pip install --quiet pefile capstone
+          python3 - <<'PY' > out/native.txt
+          import pefile, re, json, struct
+          from capstone import *
+          from capstone.x86 import *
+          pe=pefile.PE('woo/GameAssembly.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          data=open('woo/GameAssembly.dll','rb').read()
+
+          def va_to_off(va):
+              rva=va-base
+              return pe.get_offset_from_rva(rva)
+
+          def cstring_at_va(va, limit=300):
+              try:
+                  off=va_to_off(va)
+                  b=data[off:off+limit]
+                  end=b.find(b'\x00')
+                  if end<0: end=len(b)
+                  s=b[:end]
+                  if len(s)>=4 and all(32<=x<127 or x in (9,10,13) for x in s):
+                      return s.decode('ascii','ignore')
+              except Exception: pass
+              return None
+
+          md=Cs(CS_ARCH_X86, CS_MODE_64)
+          md.detail=True
+
+          roots=[0x1807025A0,0x180702510] # AssetBundleFileLoader.load_file_thread / LoadBundle
+          seen=set()
+          queue=[(v,0) for v in roots]
+          print('IMAGE_BASE',hex(base))
+          while queue:
+              va,depth=queue.pop(0)
+              if va in seen or depth>4: continue
+              seen.add(va)
+              try: off=va_to_off(va)
+              except Exception: continue
+              code=data[off:off+1400]
+              print('\n'+'#'*120)
+              print('FUNC',hex(va),'DEPTH',depth,'FILEOFF',hex(off))
+              print('#'*120)
+              insns=list(md.disasm(code,va))
+              # Stop heuristically after a return beyond 32 bytes, but retain enough to catch branches.
+              kept=[]
+              for ins in insns:
+                  kept.append(ins)
+                  if ins.mnemonic.startswith('ret') and ins.address-va>32:
+                      break
+                  if ins.address-va>1100:
+                      break
+              for ins in kept:
+                  extra=[]
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      tgt=ins.operands[0].imm
+                      extra.append('CALL='+hex(tgt))
+                      if base <= tgt < base+pe.OPTIONAL_HEADER.SizeOfImage and depth<4:
+                          queue.append((tgt,depth+1))
+                  # rip-relative memory refs
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          s=cstring_at_va(tgt)
+                          if s:
+                              extra.append('STR@'+hex(tgt)+'='+repr(s[:180]))
+                          else:
+                              # print small raw chunk at static target
+                              try:
+                                  toff=va_to_off(tgt)
+                                  raw=data[toff:toff+64]
+                                  if raw:
+                                      extra.append('DATA@'+hex(tgt)+'='+raw.hex())
+                              except Exception: pass
+                  print(f"{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:48s} {' | '.join(extra)}")
+
+          print('\n=== PRINTABLE STRINGS FILTER ===')
+          for m in re.finditer(rb'[ -~]{5,}',data):
+              s=m.group().decode('ascii','ignore')
+              if any(k in s.lower() for k in ['aes','sha256','sha-256','decrypt','encrypt','crypt','assetbundle','.rab']):
+                  print(hex(m.start()),s[:500])
+          PY
+
+          echo '===== MANAGED ====='
+          cat out/managed.txt
+          echo '===== NATIVE ====='
+          cat out/native.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-rab-decryptor-trace
+          path: out/
+          retention-days: 1
