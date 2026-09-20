@@ -1,0 +1,4 @@
+covering reads 3
+1 0x180002ceb disp 0x64 size 4 score 177 ins mov eax, dword ptr [rdx + 0x64]
+2 0x18000306a disp 0x60 size 16 score 100 ins movaps xmmword ptr [rsp + 0x60], xmm6
+3 0x1800031d4 disp 0x60 size 16 score 100 ins movaps xmm6, xmmword ptr [rsp + 0x60]
