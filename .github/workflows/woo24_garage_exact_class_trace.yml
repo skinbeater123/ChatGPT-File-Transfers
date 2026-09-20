@@ -1,0 +1,68 @@
+name: WoO24 garage exact class trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_garage_exact_class_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Exact class and call-path extract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo tools out
+          unzip -q WOO24.zip -d woo
+          git clone --depth 1 https://github.com/Perfare/Il2CppDumper.git tools/Il2CppDumper
+          dotnet build tools/Il2CppDumper/Il2CppDumper/Il2CppDumper.csproj -c Release -f net8.0 >/dev/null
+          D=tools/Il2CppDumper/Il2CppDumper/bin/Release/net8.0
+          sed -i 's/"RequireAnyKey": true/"RequireAnyKey": false/' "$D/config.json"
+          mkdir -p out/dump
+          dotnet "$D/Il2CppDumper.dll" woo/GameAssembly.dll woo/global-metadata.dat out/dump >/dev/null
+
+          python3 - <<'PY' > out/exact.txt
+          from pathlib import Path
+          import re
+          txt=Path('out/dump/dump.cs').read_text(errors='ignore')
+          names=['UIGarageScene','MGIPhysicsPrefabWarehouse','PhysicsPrefabChassisData','ChassisInfo','CarLoader','ChassisManager']
+          for name in names:
+              print('\n'+'='*130)
+              print('EXACT CLASS',name)
+              print('='*130)
+              # find every class declaration with exact terminal name, ignoring nested generic display classes
+              pat=re.compile(r'(?m)^.*\bclass\s+'+re.escape(name)+r'\b[^\n]*$')
+              ms=list(pat.finditer(txt))
+              print('MATCHES',len(ms))
+              for m in ms:
+                  line=m.group(0)
+                  if name+'.' in line:
+                      continue
+                  start=txt.rfind('// Namespace:',0,m.start())
+                  if start<0: start=max(0,m.start()-500)
+                  # next top-level namespace marker after at least this declaration
+                  nxt=txt.find('// Namespace:',m.end()+1)
+                  if nxt<0: nxt=len(txt)
+                  print(txt[start:min(nxt,start+30000)])
+
+          print('\n=== RESOURCE/CALL TERMS ===')
+          terms=['_carloaderResourceId','carloaderResourceId','GetCarLoader','LoadCar','load_car','CarLoader','PhysicsPrefabs/','GetChassisInfo','m_chassis_info']
+          for term in terms:
+              print('\nTERM',term)
+              for m in list(re.finditer(re.escape(term),txt))[:100]:
+                  print(txt[max(0,m.start()-1800):min(len(txt),m.end()+4500)])
+          PY
+
+          cat out/exact.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-garage-exact-class-trace
+          path: out/exact.txt
+          retention-days: 1
