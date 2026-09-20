@@ -1,0 +1,44 @@
+
+front_refwidth_mutator 0x1800222d0
+0x180023aa0 delta=+0x17d0 AIGetDiags
+0x180023c60 delta=+0x1990 AIDebugCommand
+0x180023cd0 delta=+0x1a00 AISetHatingCar
+0x180023dc0 delta=+0x1af0 AIIsAngryIncidentTriggered
+0x180023f80 delta=+0x1cb0 AIConfigureDraftBuddy
+0x180023fb0 delta=+0x1ce0 AIGetDraftBuddies
+0x180027380 delta=+0x50b0 InstallCallbacks_CARDATA
+0x180027400 delta=+0x5130 BGCARDATAInstallWorldGetSetupByCarNumberFn
+0x180027410 delta=+0x5140 BGCARDATAInstallWorldGetUpgradesByCarNumberFn
+0x1800275b0 delta=+0x52e0 InstallCallbacks_CONTROL
+0x180027650 delta=+0x5380 BGCONTROLInstallControlGetFn
+0x180027660 delta=+0x5390 BGCONTROLInstallControlReadAnalogFn
+0x180027670 delta=+0x53a0 BGCONTROLInstallControlIsDigitalFn
+0x180027680 delta=+0x53b0 BGCONTROLInstallControlReadDigitalFn
+0x180027690 delta=+0x53c0 BGCONTROLInstallControlExistsFn
+0x1800276a0 delta=+0x53d0 BGCONTROLInstallControlSetRumbleForceFn
+0x1800276b0 delta=+0x53e0 BGCONTROLInstallControlSetForceFeedbackFn
+0x1800276c0 delta=+0x53f0 BGCONTROLInstallControlClearForcesFn
+0x180027940 delta=+0x5670 InstallCallbacks_GHOST
+0x1800279c0 delta=+0x56f0 BGGHOSTInstallGhostGetLineDataFn
+
+rear_refwidth_forwarder 0x1800c6ec0
+0x1800c7a40 delta=+0xb80 InstallCallbacks_EVENT
+0x1800c7ac0 delta=+0xc00 BGEVENTInstallEventSendFn
+0x1800c7ad0 delta=+0xc10 BGEVENTInstallEventSendViewportFn
+0x1800c7c40 delta=+0xd80 InstallCallbacks_TVCAM
+0x1800c7cc0 delta=+0xe00 BGTVCAMInstallGetOriginFn
+0x1800c7cd0 delta=+0xe10 BGTVCAMInstallGetDataFn
+0x1800c7e70 delta=+0xfb0 InstallCallbacks_CONSOLE
+0x1800c7ee0 delta=+0x1020 BGCONSOLEInstallConsoleRegisterFn
+0x1800cd8e0 delta=+0x6a20 HMInit
+0x1800cd920 delta=+0x6a60 HMInitAddStage
+0x1800cd9c0 delta=+0x6b00 HMActivateHeats
+0x1800cda30 delta=+0x6b70 HMDeactivateHeats
+0x1800cdaa0 delta=+0x6be0 HMHeatsAreActive
+0x1800cdb20 delta=+0x6c60 HMHeatsAreEnabled
+0x1800cdba0 delta=+0x6ce0 HMGetCurrentStageIdx
+0x1800cdc20 delta=+0x6d60 HMGetPendingStageIdx
+0x1800cdca0 delta=+0x6de0 HMAdvance
+0x1800cddb0 delta=+0x6ef0 HMGetStageParticipantCount
+0x1800cde30 delta=+0x6f70 HMStageHasResults
+0x1800cdf20 delta=+0x7060 HMInvalidateCurrentStageResults
