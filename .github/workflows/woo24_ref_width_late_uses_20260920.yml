@@ -1,0 +1,56 @@
+name: WoO24 ref_width late uses 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_late_uses_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          python3 - <<'PY'
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; d=Path(fn).read_bytes(); pe=pefile.PE(fn); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          def off(va): return pe.get_offset_from_rva(va-base)
+          def f32(va):
+            try:return struct.unpack('<f',d[off(va):off(va)+4])[0]
+            except:return None
+          def cstr(va):
+            try:
+              b=d[off(va):off(va)+300].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=x<127 or x in (9,10,13) for x in b): return b.decode('ascii','replace')
+            except: pass
+          lo,hi=0x1800c3340,0x1800c517d
+          ins=list(md.disasm(d[off(lo):off(lo)+(hi-lo)],lo))
+          idx={x.address:i for i,x in enumerate(ins)}
+          print('=== ALL SOURCE/ASSERT STRINGS IN WHEEL FUNCTION ===')
+          for x in ins:
+            for op in x.operands:
+              if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                va=x.address+x.size+op.mem.disp; s=cstr(va)
+                if s: print(hex(x.address),repr(s))
+          for a in [0x1800c46fe,0x1800c48d5,0x1800c4f11]:
+            print('\n=== WIDTH LOCAL USE',hex(a),'===')
+            i=idx[a]
+            for x in ins[max(0,i-65):min(len(ins),i+95)]:
+              ann=[]
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                  va=x.address+x.size+op.mem.disp; ann.append(f'RIP {va:#x} f32={f32(va)!r} str={cstr(va)!r}')
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:72s} {" | ".join(ann)}')
+          print('\n=== ALL RBP-60 USES WITH BASIC BLOCK NEIGHBORS ===')
+          for i,x in enumerate(ins):
+            if 'rbp - 0x60' in x.op_str.lower():
+              print('\nUSE',hex(x.address))
+              for y in ins[max(0,i-12):min(len(ins),i+18)]:
+                print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          PY
