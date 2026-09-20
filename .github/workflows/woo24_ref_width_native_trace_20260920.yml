@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   trace:
@@ -33,6 +33,19 @@ jobs:
             objdump -p "$f" > "out/${b}.pe.txt" || true
           done
           python .github/scripts/woo24_ref_width_native_trace.py phys_unpack/physimpl.dll out > out/trace_stdout.txt
+      - name: Publish trace text to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="forensics/woo24_ref_width_native_trace_20260920"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          cp -a out/. "$dest/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$dest"
+          git commit -m "Publish WoO24 ref_width native trace" || exit 0
+          git push
       - uses: actions/upload-artifact@v4
         with:
           name: woo24-ref-width-native-trace
