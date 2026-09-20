@@ -1,0 +1,85 @@
+name: WoO24 resources external dependency probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_resources_external_dependency_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trace Sprint410 resource objects and external files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/dependencies.txt
+          from pathlib import Path
+          import json
+          import UnityPy
+
+          env=UnityPy.load('unpack')
+          sf=None
+          for k,v in env.files.items():
+              name=getattr(v,'name',k)
+              if name.endswith('resources.assets') or k.endswith('resources.assets'):
+                  sf=v
+                  break
+          print('SERIALIZED_FILE',getattr(sf,'name',None),type(sf).__name__)
+          if sf is None:
+              raise SystemExit('resources.assets not loaded')
+
+          print('\nEXTERNALS')
+          exts=getattr(sf,'externals',None) or []
+          for i,e in enumerate(exts,1):
+              print(i,repr(getattr(e,'path',None)),repr(getattr(e,'name',None)),repr(e))
+
+          print('\nSPRINT410 NAMED OBJECTS')
+          for obj in sf.objects.values() if hasattr(sf.objects,'values') else sf.objects:
+              try:
+                  d=obj.read()
+              except Exception:
+                  continue
+              name=getattr(d,'m_Name','') or ''
+              if 'Sprint410' not in name and 'sprint410' not in name:
+                  continue
+              script=''
+              pptrs=[]
+              try:
+                  if obj.type.name=='MonoBehaviour':
+                      ms=d.m_Script
+                      try:
+                          sc=ms.read()
+                          script=getattr(sc,'m_ClassName','') or getattr(sc,'m_Name','') or ''
+                      except Exception:
+                          script=f'PPtr(file={getattr(ms,"file_id",None)},path={getattr(ms,"path_id",None)})'
+              except Exception:
+                  pass
+              print(f'OBJ path_id={obj.path_id} type={obj.type.name} name={name!r} script={script!r} size={len(obj.get_raw_data())}')
+              # Typetree gives named PPtrs when available.
+              try:
+                  tree=obj.read_typetree()
+                  print('TYPETREE',json.dumps(tree,default=str)[:30000])
+              except Exception as e:
+                  print('TYPETREE_ERROR',repr(e))
+          PY
+
+          cat out/dependencies.txt
+
+      - name: Upload derived results
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-resources-external-dependency-probe
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
