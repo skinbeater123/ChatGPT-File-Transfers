@@ -1,0 +1,135 @@
+name: WoO24 proven axle ref_width consumers v2 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_proven_axle_refwidth_consumers_v2_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/refwidth_v2.txt
+          import pefile,struct,collections,bisect
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; raw=Path(fn).read_bytes(); pe=pefile.PE(fn); B=pe.OPTIONAL_HEADER.ImageBase
+          funcs=sorted(set((B+e.struct.BeginAddress,B+e.struct.EndAddress) for e in pe.DIRECTORY_ENTRY_EXCEPTION if e.struct.EndAddress>e.struct.BeginAddress))
+          starts=[a for a,b in funcs]
+          def off(v): return pe.get_offset_from_rva(v-B)
+          def bound(v):
+            i=bisect.bisect_right(starts,v)-1
+            return funcs[i] if i>=0 and funcs[i][0]<=v<funcs[i][1] else None
+          def dis(f):
+            a,b=f; md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+            return list(md.disasm(raw[off(a):off(a)+(b-a)],a))
+          fields={0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+                  0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+                  0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+                  0xa0:'camber_stiff',0xa4:'camber_peak',0xa8:'camber_grip',
+                  0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start',
+                  0xb8:'fade_stop',0xbc:'fade',0xc0:'ref_width'}
+          allf={}
+          for f in funcs:
+            try: allf[f]=dis(f)
+            except: pass
+
+          def memops(x):
+            try:return [op for op in x.operands if op.type==X86_OP_MEM]
+            except:return []
+
+          print('FUNCTIONS',len(allf))
+          print('\n=== ALL +C0 DIRECT MEMORY OPERANDS ===')
+          c0=[]
+          for f,ii in allf.items():
+            for j,x in enumerate(ii):
+              for op in memops(x):
+                if op.mem.disp==0xc0:
+                  c0.append((f,j,x,op))
+          print('count',len(c0))
+          for f,j,x,op in c0:
+            base=x.reg_name(op.mem.base) if op.mem.base else 'NONE'
+            idx=x.reg_name(op.mem.index) if op.mem.index else 'NONE'
+            print(f'\nC0 {x.address:#x} func={f[0]:#x}-{f[1]:#x} base={base} idx={idx} ins={x.mnemonic} {x.op_str}')
+            for y in allf[f][max(0,j-14):min(len(allf[f]),j+22)]:
+              print(f'  {y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+
+          print('\n=== SAME-BASE COHERENT AXLE CLUSTERS CONTAINING +C0 ===')
+          for f,ii in allf.items():
+            br=collections.defaultdict(list)
+            for j,x in enumerate(ii):
+              for op in memops(x):
+                if op.mem.base and op.mem.index==0 and op.mem.disp in fields:
+                  reg=x.reg_name(op.mem.base); br[reg].append((op.mem.disp,j,x))
+            for reg,h in br.items():
+              offs={d for d,j,x in h}
+              if 0xc0 in offs and len(offs)>=4:
+                print(f'\nCLUSTER func={f[0]:#x}-{f[1]:#x} base={reg} offs='+','.join(f'{fields[o]}@{o:#x}' for o in sorted(offs)))
+                for d,j,x in h: print(f'  {x.address:#x}: {x.mnemonic} {x.op_str} ; {fields[d]}')
+
+          print('\n=== EMBEDDED CAR AXLE REF_WIDTH DIRECT OFFSETS ===')
+          for target,label in [(0x24c,'front_refwidth_if_carbase'),(0x310,'rear_refwidth_if_carbase')]:
+            hits=[]
+            for f,ii in allf.items():
+              for j,x in enumerate(ii):
+                for op in memops(x):
+                  if op.mem.disp==target:
+                    hits.append((f,j,x,op))
+            print(f'\n{label} offset={target:#x} count={len(hits)}')
+            for f,j,x,op in hits:
+              base=x.reg_name(op.mem.base) if op.mem.base else 'NONE'
+              print(f'HIT {x.address:#x} func={f[0]:#x}-{f[1]:#x} base={base} {x.mnemonic} {x.op_str}')
+              for y in ii[max(0,j-8):min(len(ii),j+12)] if False else []: pass
+
+          print('\n=== SAME-BASE EMBEDDED AXLE CLUSTERS ===')
+          for label,baseoff in [('FRONT',0x18c),('REAR',0x250)]:
+            targ={baseoff+k:(k,fields[k]) for k in fields}
+            for f,ii in allf.items():
+              br=collections.defaultdict(list)
+              for j,x in enumerate(ii):
+                for op in memops(x):
+                  if op.mem.base and op.mem.index==0 and op.mem.disp in targ:
+                    reg=x.reg_name(op.mem.base); br[reg].append((op.mem.disp,j,x))
+              for reg,h in br.items():
+                offs={d for d,j,x in h}
+                if baseoff+0xc0 in offs and len(offs)>=4:
+                  print(f'\n{label} CLUSTER func={f[0]:#x}-{f[1]:#x} base={reg} '+','.join(targ[o][1] for o in sorted(offs)))
+                  for d,j,x in h: print(f'  {x.address:#x}: {x.mnemonic} {x.op_str} ; {targ[d][1]}')
+
+          print('\n=== CALLERS OF C0-READ FUNCTIONS ===')
+          targets={f[0] for f,j,x,op in c0}
+          for f,ii in allf.items():
+            for j,x in enumerate(ii):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm in targets:
+                print(f'CALL {x.address:#x} caller={f[0]:#x}-{f[1]:#x} -> {x.operands[0].imm:#x}')
+                for y in ii[max(0,j-12):min(len(ii),j+15)]: print(f'  {y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+
+          print('\n=== DIRECT CALLERS 0x1800C3340 ===')
+          t=0x1800c3340
+          for f,ii in allf.items():
+            for j,x in enumerate(ii):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==t:
+                print(f'CALL {x.address:#x} caller={f}')
+                for y in ii[max(0,j-20):min(len(ii),j+20)]: print(f'  {y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+
+          print('\n=== RAW EXACT VA POINTER 0x1800C3340 ===')
+          needle=struct.pack('<Q',t); p=0; n=0
+          while True:
+            p=raw.find(needle,p)
+            if p<0:break
+            n+=1; print('fileoff',hex(p))
+            p+=1
+          print('count',n)
+          PY
+          cat out/refwidth_v2.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-proven-axle-refwidth-consumers-v2
+          path: out/refwidth_v2.txt
+          retention-days: 3
