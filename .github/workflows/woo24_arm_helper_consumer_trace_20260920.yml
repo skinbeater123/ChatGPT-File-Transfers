@@ -1,0 +1,92 @@
+name: WoO24 ARM helper and consumer trace 20260920
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_arm_helper_consumer_trace_20260920.yml'
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d p
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/arm_trace.txt
+          import pefile,struct
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+          fn='p/physimpl.dll'; d=Path(fn).read_bytes(); pe=pefile.PE(fn); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          def off(va): return pe.get_offset_from_rva(va-base)
+          def boundary(va):
+            for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[]):
+              a=base+e.struct.BeginAddress; b=base+e.struct.EndAddress
+              if a<=va<b:return a,b
+          def cstr(va):
+            try:
+              b=d[off(va):off(va)+300].split(b'\0',1)[0]
+              if len(b)>2 and all(32<=x<127 or x in (9,10,13) for x in b): return b.decode('ascii','replace')
+            except: pass
+          def f32(va):
+            try:return struct.unpack('<f',d[off(va):off(va)+4])[0]
+            except:return None
+          def dump_fn(va):
+            b=boundary(va)
+            print('BOUNDARY',hex(va),b)
+            if not b:return
+            ins=list(md.disasm(d[off(b[0]):off(b[0])+(b[1]-b[0])],b[0]))
+            for x in ins:
+              ann=[]
+              for op in x.operands:
+                if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                  rv=x.address+x.size+op.mem.disp
+                  ann.append(f'RIP={rv:#x} f32={f32(rv)!r} str={cstr(rv)!r}')
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:72s} {" | ".join(ann)}')
+          print('=== HELPER 0x180011320 ===')
+          dump_fn(0x180011320)
+          print('\n=== HELPER 0x18007F070 ===')
+          dump_fn(0x18007F070)
+
+          # wheel function
+          lo,hi=0x1800c3340,0x1800c517d
+          ins=list(md.disasm(d[off(lo):off(lo)+(hi-lo)],lo))
+
+          print('\n=== ALL CALLS TO 0x180011320 IN WHEEL FUNCTION ===')
+          for i,x in enumerate(ins):
+            if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==0x180011320:
+              print('\nCALL',hex(x.address))
+              for y in ins[max(0,i-15):min(len(ins),i+12)]:
+                print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+
+          print('\n=== ARM ARRAY ADDRESS PATTERNS ===')
+          # Find any access involving r13/rdi with likely offsets 0x6c-0x84 or indexed stride setup.
+          for x in ins:
+            s=x.op_str.lower()
+            if any(tok in s for tok in ['+ 0x6c]', '+ 0x70]', '+ 0x74]', '+ 0x78]', '+ 0x7c]', '+ 0x80]', '+ 0x84]']) or '0x1c' in s:
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str}')
+
+          print('\n=== WHEEL MEMBER STORES NEAR FINAL 0x4F00 ===')
+          for x in ins:
+            if 0x1800c4ee0<=x.address<=0x1800c50ff:
+              print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str}')
+
+          print('\n=== POTENTIAL XPROD SHAPES IN WHEEL FUNCTION ===')
+          # Simple pattern: three subtractions preceded by paired multiplications within 12 insns
+          for i,x in enumerate(ins):
+            if x.mnemonic=='subss':
+              win=ins[max(0,i-8):i+1]
+              muls=[y for y in win if y.mnemonic=='mulss']
+              if len(muls)>=2:
+                print('\nSUB',hex(x.address),x.op_str)
+                for y in win: print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          PY
+          cat out/arm_trace.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-arm-helper-consumer-trace
+          path: out/arm_trace.txt
+          retention-days: 3
