@@ -1,0 +1,72 @@
+name: WoO24 ref_width schema registration xref 20260920
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_schema_registration_xref_20260920.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install --quiet pefile capstone
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf phys_unpack out_schema
+          mkdir -p phys_unpack out_schema
+          unzip -q phys.zip -d phys_unpack
+          python - <<'PY' | tee out_schema/summary.txt
+          import pefile,bisect
+          from capstone import Cs,CS_ARCH_X86,CS_MODE_64
+          from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP
+          p='phys_unpack/physimpl.dll'; raw=open(p,'rb').read(); pe=pefile.PE(p); base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; md.skipdata=True
+          ins=[]
+          for s in pe.sections:
+            if s.Characteristics & 0x20000000:
+              ins.extend(md.disasm(raw[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData],base+s.VirtualAddress))
+          def va_for_string(s):
+            q=raw.find(s.encode()+b'\0')
+            return base+pe.get_rva_from_offset(q),q
+          names=['ref_width','grip_fade','grip_fade_stop','grip_fade_start','long_frict','long_stiff','frict_load1','magic_b','friction','moment']
+          targets={}
+          for n in names:
+            va,off=va_for_string(n); targets[va]=n; print(n,hex(va),hex(off))
+          refs=[]
+          for idx,i in enumerate(ins):
+            try:ops=i.operands
+            except:continue
+            for op in ops:
+              if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                t=i.address+i.size+op.mem.disp
+                if t in targets:refs.append((idx,i,t,targets[t]))
+              elif op.type==X86_OP_IMM and op.imm in targets:
+                refs.append((idx,i,op.imm,targets[op.imm]))
+          print('refs',len(refs))
+          for idx,i,t,n in refs:print(n,hex(i.address),i.mnemonic,i.op_str)
+          with open('out_schema/xrefs_context.txt','w') as o:
+            for idx,i,t,n in refs:
+              o.write(f'\n===== {n} {t:#x} @ {i.address:#x} =====\n')
+              for q in ins[max(0,idx-100):min(len(ins),idx+180)]:
+                o.write(f'{q.address:#018x}: {q.mnemonic:8s} {q.op_str}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-schema-registration-xref
+          path: out_schema/
+          retention-days: 3
+      - shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf forensics_output/woo24_ref_width_schema_registration_xref_20260920
+          mkdir -p forensics_output/woo24_ref_width_schema_registration_xref_20260920
+          cp out_schema/* forensics_output/woo24_ref_width_schema_registration_xref_20260920/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forensics_output/woo24_ref_width_schema_registration_xref_20260920
+          git commit -m "forensics: publish WoO24 ref_width schema xrefs" || exit 0
+          git push
