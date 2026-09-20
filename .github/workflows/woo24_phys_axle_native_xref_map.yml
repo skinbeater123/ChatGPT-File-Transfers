@@ -1,0 +1,147 @@
+name: WoO24 phys axle native xref map
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_phys_axle_native_xref_map.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Map axle parameter strings, tables and code xrefs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile,struct,re
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          targets = [
+            'ref_width','frict_load1','frict_k1','frict_load2','frict_k2',
+            'stiff_load1','stiff_c1','stiff_load2','stiff_c2',
+            'magic_b','magic_c','magic_d','magic_e','long_stiff','long_frict',
+            'camber_stiff','camber_grip','camber_peak',
+            'grip_fade_start','grip_fade_stop','grip_fade','rear_diff_stiff',
+            'VFFRontAxle','VFFrontAxle','VFRearAxle'
+          ]
+
+          def va_from_fileoff(pe, off):
+              for s in pe.sections:
+                  a=s.PointerToRawData
+                  b=a+s.SizeOfRawData
+                  if a <= off < b:
+                      return pe.OPTIONAL_HEADER.ImageBase+s.VirtualAddress+(off-a)
+              return None
+
+          def fileoff_from_va(pe, va):
+              rva=va-pe.OPTIONAL_HEADER.ImageBase
+              try: return pe.get_offset_from_rva(rva)
+              except: return None
+
+          for dll in ['phys_unpack/phys.dll','phys_unpack/physimpl.dll']:
+              p=Path(dll)
+              if not p.exists(): continue
+              data=p.read_bytes()
+              pe=pefile.PE(dll)
+              base=pe.OPTIONAL_HEADER.ImageBase
+              print('\n'+'='*140)
+              print('DLL',dll,'size',len(data),'base',hex(base),'machine',hex(pe.FILE_HEADER.Machine))
+              print('='*140)
+
+              print('\nEXPORTS')
+              if hasattr(pe,'DIRECTORY_ENTRY_EXPORT'):
+                  for sym in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                      n=sym.name.decode(errors='replace') if sym.name else ''
+                      if any(k.lower() in n.lower() for k in ['physicsconfigsetfrontaxle','physicsconfigsetrearaxle','physicsconfigsetwheel','physicsconfigsettransmission','physicscreatecar']):
+                          print(hex(base+sym.address),n)
+
+              found={}
+              for t in targets:
+                  needle=t.encode()+b'\0'
+                  offs=[m.start() for m in re.finditer(re.escape(needle),data)]
+                  if not offs: continue
+                  found[t]=[]
+                  for off in offs:
+                      va=va_from_fileoff(pe,off)
+                      found[t].append((off,va))
+                      print(f'STR {t:24s} off={off:#x} va={va:#x}' if va else f'STR {t} off={off:#x}')
+
+              # Find qword pointers to every target string, and nearby pointer-table context.
+              ptrs={}
+              for t,locs in found.items():
+                  for off,sva in locs:
+                      if not sva: continue
+                      pat=struct.pack('<Q',sva)
+                      poffs=[m.start() for m in re.finditer(re.escape(pat),data)]
+                      for po in poffs:
+                          pva=va_from_fileoff(pe,po)
+                          ptrs.setdefault(t,[]).append((po,pva))
+                          print(f'PTR {t:24s} ptr_off={po:#x} ptr_va={pva:#x}' if pva else f'PTR {t} ptr_off={po:#x}')
+                          lo=max(0,po-64); hi=min(len(data),po+96)
+                          print(' PTR_HEX',data[lo:hi].hex())
+                          # annotate qwords around pointer
+                          for qoff in range((po//8)*8-48,(po//8)*8+80,8):
+                              if qoff<0 or qoff+8>len(data): continue
+                              q=struct.unpack_from('<Q',data,qoff)[0]
+                              label=''
+                              # Does q point to printable ASCII?
+                              fo=fileoff_from_va(pe,q)
+                              if fo is not None and 0 <= fo < len(data):
+                                  raw=data[fo:fo+100].split(b'\0',1)[0]
+                                  if raw and all(32<=b<127 for b in raw[:min(len(raw),60)]):
+                                      label=' -> '+raw[:80].decode(errors='replace')
+                              print(f'  Q {qoff:#x} va={va_from_fileoff(pe,qoff)} {q:#018x}{label}')
+
+              # Disassemble .text once, collect direct RIP/IMM refs to target strings or pointer VAs.
+              textsec=None
+              for s in pe.sections:
+                  if s.Name.rstrip(b'\0')==b'.text': textsec=s; break
+              if not textsec: continue
+              code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+              start=base+textsec.VirtualAddress
+              md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+              needles={}
+              for t,locs in found.items():
+                  for _,v in locs:
+                      if v: needles[v]=('STR',t)
+              for t,locs in ptrs.items():
+                  for _,v in locs:
+                      if v: needles[v]=('PTR',t)
+              refs=[]
+              insns=list(md.disasm(code,start))
+              for idx,ins in enumerate(insns):
+                  candidates=[]
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          candidates.append(ins.address+ins.size+op.mem.disp)
+                      elif op.type==X86_OP_IMM:
+                          candidates.append(op.imm)
+                  for c in candidates:
+                      if c in needles:
+                          refs.append((idx,ins.address,needles[c],c))
+              print('\nCODE_XREFS',len(refs))
+              for idx,addr,label,c in refs:
+                  print(f'\nXREF {label} target={c:#x} at={addr:#x}')
+                  for j in range(max(0,idx-18),min(len(insns),idx+35)):
+                      ins=insns[j]
+                      mark='>>' if j==idx else '  '
+                      print(f'{mark} {ins.address:016X}: {ins.mnemonic:8s} {ins.op_str}')
+          PY
+          cat out/result.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-phys-axle-native-xref-map
+          path: out/result.txt
+          retention-days: 2
