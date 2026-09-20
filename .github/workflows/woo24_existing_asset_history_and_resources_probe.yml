@@ -1,0 +1,93 @@
+name: WoO24 existing asset history and resources probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_existing_asset_history_and_resources_probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Search git history and existing resources asset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out unpack
+          unzip -q globalgamemanagers.zip -d unpack
+
+          {
+            echo "=== HISTORY OBJECT/PATH SEARCH ==="
+            git rev-list --objects --all | grep -Ei 'SharedAssets\.zip|sharedassets[0-9]+(\.assets|\.resource|\.resS)?|resources\.assets|globalgamemanagers' || true
+            echo
+            echo "=== HISTORY NAME-STATUS SEARCH ==="
+            git log --all --name-status --pretty='format:COMMIT %H %ad %s' --date=iso --               '*SharedAssets*' '*sharedassets*' '*resources.assets*' '*globalgamemanagers*' || true
+          } > out/history.txt
+
+          {
+            echo "=== resources.assets target strings ==="
+            strings -a unpack/resources.assets | grep -Ei               'CarPhysicsAsset|PhysWheelAsset|PhysAxleAsset|PhysChassisAsset|PhysEngineAsset|PhysTransmissionAsset|Sprint410|Sprint410Dirt|front_grip|rear_grip|stiff_load|long_stiff|frict_load|grip_lf|grip_rf|grip_lr|grip_rr' | head -5000 || true
+            echo
+            echo "=== globalgamemanagers.assets target strings ==="
+            strings -a unpack/globalgamemanagers.assets | grep -Ei               'CarPhysicsAsset|PhysWheelAsset|PhysAxleAsset|PhysChassisAsset|PhysEngineAsset|PhysTransmissionAsset|Sprint410|Sprint410Dirt' | head -5000 || true
+          } > out/strings.txt
+
+          python3 -m pip install --disable-pip-version-check --quiet UnityPy
+
+          python3 - <<'PY' > out/unitypy_inventory.txt
+          from pathlib import Path
+          import UnityPy
+
+          targets = (
+              'CarPhysicsAsset','PhysWheelAsset','PhysAxleAsset','PhysChassisAsset',
+              'PhysEngineAsset','PhysTransmissionAsset','Sprint410','Sprint410Dirt'
+          )
+
+          for fn in ['unpack/resources.assets','unpack/globalgamemanagers.assets']:
+              print('\n' + '='*100)
+              print(fn)
+              print('='*100)
+              try:
+                  env=UnityPy.load(fn)
+              except Exception as e:
+                  print('LOAD_ERROR',repr(e)); continue
+              counts={}
+              hits=0
+              for obj in env.objects:
+                  t=obj.type.name
+                  counts[t]=counts.get(t,0)+1
+                  try:
+                      data=obj.read()
+                  except Exception:
+                      continue
+                  name=getattr(data,'m_Name','') or ''
+                  script=''
+                  if t=='MonoScript':
+                      script=getattr(data,'m_ClassName','') or ''
+                  text=f'{name} {script}'
+                  if any(x.lower() in text.lower() for x in targets):
+                      print(f'HIT path_id={obj.path_id} type={t} name={name!r} script={script!r}')
+                      hits+=1
+              print('COUNTS',counts)
+              print('HITS',hits)
+          PY
+
+          cat out/history.txt
+          cat out/strings.txt
+          cat out/unitypy_inventory.txt
+
+      - name: Upload derived text
+        uses: actions/upload-artifact@v4
+        with:
+          name: woo24-existing-asset-history-and-resources-probe
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
