@@ -1,0 +1,67 @@
+name: WoO24 RAB key material fast
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_rab_key_material_fast.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Fetch only WOO24 runtime pack
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o WOO24.zip https://raw.githubusercontent.com/skinbeater123/ChatGPT-File-Transfers/main/WOO24.zip
+          mkdir -p woo out
+          unzip -q WOO24.zip -d woo
+          python3 -m pip install --quiet pefile capstone
+
+          python3 - <<'PY' > out/key_trace.txt
+          import pefile, re
+          from capstone import *
+          from capstone.x86 import *
+          path='woo/GameAssembly.dll'
+          data=open(path,'rb').read()
+          pe=pefile.PE(path)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def va_to_off(va): return pe.get_offset_from_rva(va-base)
+          def raw(va,n=128):
+              try: return data[va_to_off(va):va_to_off(va)+n]
+              except: return b''
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+          roots=[
+            ('DecryptAssetBundleData',0x180701AC0),
+            ('DecryptData',0x180701C20),
+            ('GetAesKeyFromBytes',0x180701F30),
+            ('GetFull',0x180701FF0),
+            ('PerformCryptography',0x180702210),
+            ('cctor',0x180702420),
+          ]
+          for name,va in roots:
+              off=va_to_off(va)
+              print('\n===',name,hex(va),'off',hex(off),'===')
+              for ins in md.disasm(data[off:off+1800],va):
+                  ex=[]
+                  if ins.mnemonic=='call' and ins.operands and ins.operands[0].type==X86_OP_IMM:
+                      ex.append('CALL='+hex(ins.operands[0].imm))
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                          tgt=ins.address+ins.size+op.mem.disp
+                          r=raw(tgt,160)
+                          ex.append('RIP='+hex(tgt)+' RAW='+r[:96].hex())
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:55s} '+' | '.join(ex))
+                  if ins.mnemonic.startswith('ret') and ins.address-va>24: break
+          PY
+          cat out/key_trace.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-rab-key-material-fast
+          path: out/key_trace.txt
+          retention-days: 1
