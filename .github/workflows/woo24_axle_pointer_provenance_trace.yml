@@ -1,0 +1,127 @@
+name: WoO24 axle pointer provenance trace
+
+on:
+  push:
+    paths:
+      - '.github/workflows/woo24_axle_pointer_provenance_trace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Track axle-base register provenance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/result.txt
+          import pefile
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          data=Path('phys_unpack/physimpl.dll').read_bytes()
+          pe=pefile.PE('phys_unpack/physimpl.dll')
+          base=pe.OPTIONAL_HEADER.ImageBase
+          def off(va): return pe.get_offset_from_rva(va-base)
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          md=Cs(CS_ARCH_X86,CS_MODE_64);md.detail=True;md.skipdata=True
+          insns=list(md.disasm(code,start))
+
+          fields={
+             0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+             0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+             0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+             0xa0:'camber_stiff',0xa4:'camber_peak_sin',0xa8:'camber_grip',
+             0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start_sin',
+             0xb8:'fade_stop_sin',0xbc:'fade',0xc0:'ref_width'
+          }
+          volatile={'rax','rcx','rdx','r8','r9','r10','r11'}
+
+          # Track in windows beginning at every proven LEA reg,[base+18c/250].
+          starts=[]
+          for idx,ins in enumerate(insns):
+              if ins.id==0 or ins.mnemonic!='lea' or len(ins.operands)<2: continue
+              d,s=ins.operands[0],ins.operands[1]
+              if d.type==X86_OP_REG and s.type==X86_OP_MEM and s.mem.base not in (0,X86_REG_RIP) and s.mem.disp in (0x18c,0x250):
+                  starts.append((idx,ins.reg_name(d.reg),'front' if s.mem.disp==0x18c else 'rear',ins.reg_name(s.mem.base)))
+          print('PROVEN BASE FORMATIONS',len(starts))
+
+          useful=[]
+          for idx,areg,side,carreg in starts:
+              aliases={areg}
+              accesses=[]
+              end=min(len(insns),idx+240)
+              for j in range(idx+1,end):
+                  p=insns[j]
+                  if p.id==0: continue
+                  # Stop at RET or unconditional far branch.
+                  if p.mnemonic=='ret': break
+                  # collect access before alias mutation
+                  for op in p.operands:
+                      if op.type==X86_OP_MEM and op.mem.base:
+                          br=p.reg_name(op.mem.base)
+                          if br in aliases and op.mem.disp in fields:
+                              accesses.append((j,p.address,br,op.mem.disp,fields[op.mem.disp],p.mnemonic,p.op_str))
+                  # propagate mov dst, alias
+                  if p.mnemonic in ('mov','lea') and len(p.operands)>=2 and p.operands[0].type==X86_OP_REG:
+                      dst=p.reg_name(p.operands[0].reg)
+                      src=p.operands[1]
+                      if p.mnemonic=='mov' and src.type==X86_OP_REG and p.reg_name(src.reg) in aliases:
+                          aliases.add(dst)
+                      elif p.mnemonic=='lea' and src.type==X86_OP_MEM and p.reg_name(src.mem.base) in aliases and src.mem.disp==0:
+                          aliases.add(dst)
+                      else:
+                          aliases.discard(dst)
+                  # calls clobber volatile aliases
+                  if p.mnemonic=='call':
+                      aliases={r for r in aliases if r not in volatile}
+              if accesses:
+                  useful.append((idx,areg,side,carreg,accesses))
+
+          print('USEFUL PROVENANCE WINDOWS',len(useful))
+          for idx,areg,side,carreg,acc in useful:
+              s=insns[idx]
+              print('\n'+'='*130)
+              print(f'BASE {side} at={s.address:#x} axle_reg={areg} car_reg={carreg} :: {s.mnemonic} {s.op_str}')
+              print('='*130)
+              for x in acc:
+                  print('ACCESS',x)
+              lo=max(0,idx-16); hi=min(len(insns),max(x[0] for x in acc)+18)
+              for j in range(lo,hi):
+                  p=insns[j]; mark='>>' if j==idx or any(j==x[0] for x in acc) else '  '
+                  print(f'{mark}{p.address:016X}: {p.mnemonic:8s} {p.op_str}')
+
+          # Focused disassembly of post-construction function.
+          for addr,size,label in [(0x1800FB0E0,0x1600,'post_axle_car_init'),(0x1800FB3A0,0x1000,'nearby_fb3a0')]:
+              print('\n'+'#'*130+'\n'+label+' '+hex(addr)+'\n'+'#'*130)
+              m2=Cs(CS_ARCH_X86,CS_MODE_64);m2.detail=True
+              n=0
+              try:o=off(addr)
+              except:continue
+              for ins in m2.disasm(data[o:o+size],addr):
+                  anns=[]
+                  for op in ins.operands:
+                      if op.type==X86_OP_MEM and op.mem.disp in fields:
+                          anns.append(fields[op.mem.disp])
+                      if op.type==X86_OP_MEM and op.mem.disp in (0x18c,0x250):
+                          anns.append('AXLE_BASE_'+('F' if op.mem.disp==0x18c else 'R'))
+                  print(f'{ins.address:016X}: {ins.mnemonic:8s} {ins.op_str:60s} {" ".join(anns)}')
+                  n+=1
+                  if ins.mnemonic=='ret' and n>5: break
+          PY
+          cat out/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-axle-pointer-provenance
+          path: out/result.txt
+          retention-days: 2
