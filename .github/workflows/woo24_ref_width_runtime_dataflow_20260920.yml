@@ -1,0 +1,124 @@
+name: WoO24 ref_width runtime dataflow 20260920
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/woo24_ref_width_runtime_dataflow_20260920.yml'
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace ref_width in physimpl
+        shell: bash
+        run: |
+          set -euxo pipefail
+          unzip -q -o phys.zip -d phys_unpack
+          python3 -m pip install --quiet pefile capstone
+          mkdir -p out
+          python3 - <<'PY' > out/ref_width_trace.txt
+          import pefile, struct, re
+          from pathlib import Path
+          from capstone import *
+          from capstone.x86 import *
+
+          fn='phys_unpack/physimpl.dll'
+          data=Path(fn).read_bytes()
+          pe=pefile.PE(fn)
+          base=pe.OPTIONAL_HEADER.ImageBase
+          md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True
+
+          def off(va):
+              return pe.get_offset_from_rva(va-base)
+          def f32(va):
+              try:return struct.unpack('<f',data[off(va):off(va)+4])[0]
+              except:return None
+          def cstr(va,limit=240):
+              try:
+                  o=off(va)
+                  b=data[o:o+limit].split(b'\0',1)[0]
+                  if len(b)>=3 and all((32<=x<127) or x in (9,10,13) for x in b):
+                      return b.decode('ascii','replace')
+              except: pass
+              return None
+          def boundary(va):
+              for e in getattr(pe,'DIRECTORY_ENTRY_EXCEPTION',[]):
+                  a=base+e.struct.BeginAddress; b=base+e.struct.EndAddress
+                  if a<=va<b:return a,b
+              return None
+          target=0x1800C3340
+          b=boundary(target) or (target,target+0x2000)
+          print('TARGET_BOUNDARY',hex(b[0]),hex(b[1]),'size',b[1]-b[0])
+          ins=list(md.disasm(data[off(b[0]):off(b[0])+(b[1]-b[0])],b[0]))
+          fields={0x70:'magic_b',0x74:'magic_c',0x78:'magic_d',0x7c:'magic_e',
+                  0x80:'frict_load1',0x84:'frict_k1',0x88:'frict_load2',0x8c:'frict_k2',
+                  0x90:'stiff_load1',0x94:'stiff_c1',0x98:'stiff_load2',0x9c:'stiff_c2',
+                  0xa0:'camber_stiff',0xa4:'camber_peak',0xa8:'camber_grip',
+                  0xac:'long_stiff',0xb0:'long_frict',0xb4:'fade_start',0xb8:'fade_stop',
+                  0xbc:'fade',0xc0:'ref_width'}
+          print('\n=== FULL FUNCTION (axle fields only when base RSI) ===')
+          for x in ins:
+              anns=[]
+              for op in x.operands:
+                  if op.type==X86_OP_MEM:
+                      if op.mem.base==X86_REG_RSI and op.mem.disp in fields:
+                          anns.append('AXLE_'+fields[op.mem.disp])
+                      if op.mem.base==X86_REG_RIP:
+                          va=x.address+x.size+op.mem.disp
+                          fv=f32(va); st=cstr(va)
+                          if fv is not None: anns.append('RIP_F32='+repr(fv))
+                          if st: anns.append('RIP_STR='+repr(st))
+              if (0x1800C33A0 <= x.address <= 0x1800C3FFF):
+                  print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:68s} {" | ".join(anns)}')
+          print('\n=== WIDTH FLOW SLICES ===')
+          for lo,hi in [(0x1800C35E0,0x1800C3690),(0x1800C3780,0x1800C39A0)]:
+              print('\nSLICE',hex(lo),hex(hi))
+              for x in ins:
+                  if lo<=x.address<=hi:
+                      anns=[]
+                      for op in x.operands:
+                          if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP:
+                              va=x.address+x.size+op.mem.disp
+                              anns.append(f'RIP={va:#x} f32={f32(va)!r} str={cstr(va)!r}')
+                      print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str:70s} {" | ".join(anns)}')
+          print('\n=== DIRECT CALLERS OF TARGET ===')
+          textsec=next(s for s in pe.sections if s.Name.rstrip(b'\0')==b'.text')
+          code=data[textsec.PointerToRawData:textsec.PointerToRawData+textsec.SizeOfRawData]
+          start=base+textsec.VirtualAddress
+          allins=list(md.disasm(code,start))
+          for i,x in enumerate(allins):
+              if x.mnemonic=='call' and x.operands and x.operands[0].type==X86_OP_IMM and x.operands[0].imm==target:
+                  print('\nCALLSITE',hex(x.address),'caller_boundary',boundary(x.address))
+                  for y in allins[max(0,i-45):min(len(allins),i+16)]:
+                      print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          print('\n=== RSI+AXLE FIELD ACCESS SUMMARY ===')
+          for x in ins:
+              for op in x.operands:
+                  if op.type==X86_OP_MEM and op.mem.base==X86_REG_RSI and op.mem.disp in fields:
+                      print(hex(x.address),fields[op.mem.disp],x.mnemonic,x.op_str)
+          print('\n=== REF_WIDTH LOCAL DATAFLOW ===')
+          for x in ins:
+              s=x.op_str.lower()
+              if ('rsi + 0xc0' in s or 'rbp - 0x60' in s or 'xmm5' in s and 0x1800c37c0<=x.address<=0x1800c3a10):
+                  print(f'{x.address:016X}: {x.mnemonic:8s} {x.op_str}')
+          print('\n=== MEMBER +0x270 WRITES / SETUPS NEAR CODE ===')
+          # candidate writes to object member +270, printed with function boundaries/context
+          hits=[]
+          for i,x in enumerate(allins):
+              for op in x.operands:
+                  if op.type==X86_OP_MEM and op.mem.disp==0x270:
+                      hits.append((i,x))
+          print('count',len(hits))
+          for i,x in hits[:80]:
+              print('\nHIT',hex(x.address),x.mnemonic,x.op_str,'boundary',boundary(x.address))
+              for y in allins[max(0,i-8):min(len(allins),i+9)]:
+                  print(f'{y.address:016X}: {y.mnemonic:8s} {y.op_str}')
+          PY
+          cat out/ref_width_trace.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: woo24-ref-width-runtime-dataflow
+          path: out/ref_width_trace.txt
+          retention-days: 3
